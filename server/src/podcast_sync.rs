@@ -166,20 +166,24 @@ pub async fn sync_once(
                                     );
                                     // Check if file already exists on disk by prefix match
                                     // (download_file appends pubdate suffix, so exact match won't work)
-                                    let existing_file = std::fs::read_dir(&pod_download_dir)
-                                        .ok()
-                                        .and_then(|entries| {
-                                            entries
-                                                .flatten()
-                                                .map(|e| e.path())
-                                                .find(|p| {
-                                                    p.file_stem()
-                                                        .and_then(|s| s.to_str())
-                                                        .is_some_and(|name| {
-                                                            name.starts_with(&sanitized_title)
-                                                        })
-                                                })
-                                        });
+                                    let existing_file = if sanitized_title.is_empty() {
+                                        None // avoid starts_with("") matching any file
+                                    } else {
+                                        std::fs::read_dir(&pod_download_dir)
+                                            .ok()
+                                            .and_then(|entries| {
+                                                entries
+                                                    .flatten()
+                                                    .map(|e| e.path())
+                                                    .find(|p| {
+                                                        p.file_stem()
+                                                            .and_then(|s| s.to_str())
+                                                            .is_some_and(|name| {
+                                                                name.starts_with(&sanitized_title)
+                                                            })
+                                                    })
+                                            })
+                                    };
 
                                     if let Some(file_path) = existing_file {
                                         // File exists on disk — register in DB and enqueue
@@ -236,9 +240,9 @@ pub async fn sync_once(
                                     while let Some(dl_result) = dl_rx.recv().await {
                                         match dl_result {
                                             PodcastDLResult::DLComplete(ep_data) => {
-                                                stats.episodes_downloaded += 1;
                                                 // Record file path in DB and enqueue
                                                 if let Some(ref file_path) = ep_data.file_path {
+                                                    stats.episodes_downloaded += 1;
                                                     if let Err(err) =
                                                         db.insert_file(ep_data.id, file_path)
                                                     {
@@ -260,6 +264,8 @@ pub async fn sync_once(
                                                     } else {
                                                         stats.episodes_enqueued += 1;
                                                     }
+                                                } else {
+                                                    warn!("DLComplete but file_path is None for episode: {}", ep_data.title);
                                                 }
                                             }
                                             PodcastDLResult::DLStart(_) => {
@@ -292,6 +298,7 @@ pub async fn sync_once(
             PodcastSyncResult::NewData(_pod_data) => {
                 // This shouldn't happen in sync (we always pass Some(id)),
                 // but handle gracefully
+                warn!("Unexpected NewData result in sync pass (expected SyncData)");
                 msg_counter += 1;
                 stats.podcasts_checked += 1;
             }
