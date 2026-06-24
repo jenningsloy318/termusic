@@ -26,6 +26,12 @@ pub struct SynchronizationSettings {
     /// before entering the periodic cycle.
     /// Default: true
     pub refresh_on_startup: bool,
+
+    /// Maximum number of new episodes to download per podcast per sync pass.
+    /// Only the newest N undownloaded episodes are fetched.
+    /// Set to 0 for unlimited (download all missing episodes).
+    /// Default: 5
+    pub max_new_episodes: u32,
 }
 
 impl Default for SynchronizationSettings {
@@ -34,6 +40,7 @@ impl Default for SynchronizationSettings {
             enable: true,
             interval: Duration::from_secs(3600),
             refresh_on_startup: true,
+            max_new_episodes: 5,
         }
     }
 }
@@ -46,6 +53,7 @@ struct SyncSettingsRaw {
     #[serde(with = "humantime_serde")]
     interval: Duration,
     refresh_on_startup: bool,
+    max_new_episodes: u32,
     /// When the struct is deserialized from a standalone TOML document that
     /// contains `[synchronization]` as a section header, this field captures
     /// the nested table so we can unwrap it.
@@ -59,6 +67,7 @@ impl Default for SyncSettingsRaw {
             enable: defaults.enable,
             interval: defaults.interval,
             refresh_on_startup: defaults.refresh_on_startup,
+            max_new_episodes: defaults.max_new_episodes,
             synchronization: None,
         }
     }
@@ -73,6 +82,8 @@ struct SyncSettingsNested {
     interval: Duration,
     #[serde(default = "default_refresh_on_startup")]
     refresh_on_startup: bool,
+    #[serde(default = "default_max_new_episodes")]
+    max_new_episodes: u32,
 }
 
 fn default_enable() -> bool {
@@ -85,6 +96,10 @@ fn default_interval() -> Duration {
 
 fn default_refresh_on_startup() -> bool {
     true
+}
+
+fn default_max_new_episodes() -> u32 {
+    5
 }
 
 /// Custom Deserialize implementation that supports dual-path deserialization:
@@ -113,12 +128,14 @@ impl<'de> Deserialize<'de> for SynchronizationSettings {
                 enable: nested.enable,
                 interval: nested.interval,
                 refresh_on_startup: nested.refresh_on_startup,
+                max_new_episodes: nested.max_new_episodes,
             })
         } else {
             Ok(Self {
                 enable: raw.enable,
                 interval: raw.interval,
                 refresh_on_startup: raw.refresh_on_startup,
+                max_new_episodes: raw.max_new_episodes,
             })
         }
     }

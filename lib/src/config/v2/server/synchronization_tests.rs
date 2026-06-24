@@ -122,6 +122,7 @@ interval = "45s"
             enable: false,
             interval: Duration::from_secs(1800), // 30 minutes
             refresh_on_startup: false,
+            max_new_episodes: 5,
         };
 
         let serialized = toml::to_string(&original).expect("should serialize");
@@ -150,6 +151,7 @@ interval = "45s"
             enable: true,
             interval: Duration::from_secs(5 * 3600 + 15 * 60 + 30), // 5h15m30s
             refresh_on_startup: true,
+            max_new_episodes: 5,
         };
 
         let serialized = toml::to_string(&original).expect("should serialize complex interval");
@@ -308,6 +310,7 @@ interval = "15m"
             enable: true,
             interval: Duration::from_secs(3600),
             refresh_on_startup: true,
+            max_new_episodes: 5,
         };
         let b = SynchronizationSettings::default();
         assert_eq!(a, b);
@@ -321,6 +324,7 @@ interval = "15m"
             enable: false,
             interval: Duration::from_secs(1800),
             refresh_on_startup: false,
+            max_new_episodes: 5,
         };
         assert_ne!(a, b);
     }
@@ -332,6 +336,7 @@ interval = "15m"
             enable: false,
             interval: Duration::from_secs(900),
             refresh_on_startup: false,
+            max_new_episodes: 5,
         };
         let cloned = original.clone();
         assert_eq!(original, cloned);

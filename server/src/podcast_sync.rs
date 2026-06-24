@@ -62,13 +62,15 @@ pub async fn sync_once(
     }
 
     // Read config values needed for this pass
-    let (download_dir, concurrent_downloads_max, max_download_retries) = {
+    let (download_dir, concurrent_downloads_max, max_download_retries, max_new_episodes) = {
         let config_read = config.read();
         let podcast_settings = &config_read.settings.podcast;
+        let sync_settings = &config_read.settings.synchronization;
         (
             podcast_settings.download_dir.clone(),
             usize::from(podcast_settings.concurrent_downloads_max.get()),
             usize::from(podcast_settings.max_download_retries),
+            sync_settings.max_new_episodes,
         )
     };
 
@@ -116,34 +118,101 @@ pub async fn sync_once(
                         match db.get_episodes(pod_id, false) {
                             Ok(episodes) => {
                                 let total_episodes = episodes.len();
-                                let episodes_to_download: Vec<EpData> = episodes
+
+                                // Create per-podcast download directory (matches TUI behavior)
+                                let pod_title =
+                                    pod_titles.get(&pod_id).cloned().unwrap_or_default();
+                                let dir_name = sanitize_with_options(
+                                    &pod_title,
+                                    Options {
+                                        truncate: true,
+                                        windows: true,
+                                        replacement: "",
+                                    },
+                                );
+                                let mut pod_download_dir = download_dir.clone();
+                                pod_download_dir.push(dir_name);
+
+                                // Filter to undownloaded episodes, limited by max_new_episodes
+                                // Episodes are ordered by pubdate DESC (newest first)
+                                let undownloaded: Vec<(usize, &_)> = episodes
                                     .iter()
                                     .enumerate()
                                     .filter(|(_, ep)| ep.path.is_none())
-                                    .map(|(idx, ep)| EpData {
-                                        id: ep.id,
-                                        pod_id: ep.pod_id,
-                                        // Use episode position in the full list (oldest=001)
-                                        title: format!("{:03} - {}", total_episodes - idx, ep.title),
-                                        url: ep.url.clone(),
-                                        pubdate: ep.pubdate,
-                                        file_path: None,
-                                    })
                                     .collect();
 
-                                if !episodes_to_download.is_empty() {
-                                    // Create per-podcast download directory (matches TUI behavior)
-                                    let pod_title = pod_titles.get(&pod_id).cloned().unwrap_or_default();
-                                    let dir_name = sanitize_with_options(
-                                        &pod_title,
+                                let limit = if max_new_episodes == 0 {
+                                    undownloaded.len()
+                                } else {
+                                    max_new_episodes as usize
+                                };
+
+                                // Check for files already existing on disk (moved/restored)
+                                // and register them in DB without re-downloading
+                                let mut episodes_to_download = Vec::new();
+                                for (idx, ep) in undownloaded.into_iter().take(limit) {
+                                    let ep_title = format!(
+                                        "{:03} - {}",
+                                        total_episodes - idx,
+                                        ep.title
+                                    );
+                                    let sanitized_title = sanitize_with_options(
+                                        &ep_title,
                                         Options {
                                             truncate: true,
                                             windows: true,
                                             replacement: "",
                                         },
                                     );
-                                    let mut pod_download_dir = download_dir.clone();
-                                    pod_download_dir.push(dir_name);
+                                    // Check if file already exists on disk by prefix match
+                                    // (download_file appends pubdate suffix, so exact match won't work)
+                                    let existing_file = std::fs::read_dir(&pod_download_dir)
+                                        .ok()
+                                        .and_then(|entries| {
+                                            entries
+                                                .flatten()
+                                                .map(|e| e.path())
+                                                .find(|p| {
+                                                    p.file_stem()
+                                                        .and_then(|s| s.to_str())
+                                                        .is_some_and(|name| {
+                                                            name.starts_with(&sanitized_title)
+                                                        })
+                                                })
+                                        });
+
+                                    if let Some(file_path) = existing_file {
+                                        // File exists on disk — register in DB and enqueue
+                                        if let Err(err) = db.insert_file(ep.id, &file_path) {
+                                            warn!("Failed to register existing file in DB: {err:#?}");
+                                        } else {
+                                            let track = PlaylistTrackSource::Path(
+                                                file_path.to_string_lossy().to_string(),
+                                            );
+                                            let add_cmd =
+                                                PlaylistAddTrack::new_append_single(track);
+                                            if let Err(err) = cmd_tx
+                                                .send(PlayerCmd::PlaylistAddTrack(add_cmd))
+                                            {
+                                                warn!("Failed to enqueue existing episode: {err}");
+                                            } else {
+                                                stats.episodes_enqueued += 1;
+                                            }
+                                            stats.episodes_downloaded += 1;
+                                        }
+                                    } else {
+                                        episodes_to_download.push(EpData {
+                                            id: ep.id,
+                                            pod_id: ep.pod_id,
+                                            title: ep_title,
+                                            url: ep.url.clone(),
+                                            pubdate: ep.pubdate,
+                                            file_path: None,
+                                        });
+                                    }
+                                }
+
+                                if !episodes_to_download.is_empty() {
                                     if let Err(err) = std::fs::create_dir_all(&pod_download_dir) {
                                         warn!("Failed to create podcast download dir {}: {err}", pod_download_dir.display());
                                         continue;
@@ -338,6 +407,7 @@ mod tests {
                 enable: true,
                 interval: Duration::from_secs(3600),
                 refresh_on_startup: true,
+                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -1115,6 +1185,7 @@ mod tests {
                 enable: false,
                 interval: Duration::from_secs(60),
                 refresh_on_startup: true,
+                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -1155,6 +1226,7 @@ mod tests {
                 enable: true,
                 interval: Duration::from_secs(3600), // 1 hour -- won't fire in test
                 refresh_on_startup: true,
+                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -1204,6 +1276,7 @@ mod tests {
                 enable: true,
                 interval: Duration::from_secs(3600), // won't fire in test
                 refresh_on_startup: false,
+                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -1255,6 +1328,7 @@ mod tests {
                 enable: true,
                 interval: Duration::from_millis(50),
                 refresh_on_startup: false, // skip startup sync to isolate periodic behavior
+                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -1302,6 +1376,7 @@ mod tests {
                 enable: true,
                 interval: Duration::from_secs(3600), // 1 hour
                 refresh_on_startup: false,
+                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -1396,6 +1471,7 @@ mod tests {
                 enable: true,
                 interval: Duration::from_secs(3600),
                 refresh_on_startup: true,
+                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -1469,6 +1545,27 @@ mod tests {
         content.extend_from_slice(&[0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
         content.extend_from_slice(&[0xFF; 1024]); // Fake audio data
         content
+    }
+
+    /// Recursively count files in a directory tree.
+    fn count_files_recursive(dir: &std::path::Path) -> usize {
+        let mut count = 0;
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    count += 1;
+                } else if path.is_dir() {
+                    count += count_files_recursive(&path);
+                }
+            }
+        }
+        count
+    }
+
+    /// Check if any file exists recursively under a directory.
+    fn walkdir(dir: &std::path::Path) -> bool {
+        count_files_recursive(dir) > 0
     }
 
     // =========================================================================
@@ -1615,15 +1712,11 @@ mod tests {
             }
         }
 
-        // Verify files were actually downloaded
-        let downloaded_files: Vec<_> = std::fs::read_dir(&download_dir)
-            .expect("read download dir")
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_file())
-            .collect();
+        // Verify files were actually downloaded (in per-podcast subdirectory)
+        let downloaded_files = count_files_recursive(&download_dir);
 
         assert_eq!(
-            downloaded_files.len(),
+            downloaded_files,
             2,
             "should have 2 downloaded files in the directory"
         );
@@ -2212,6 +2305,7 @@ mod tests {
                 enable: true,
                 interval: Duration::from_secs(3600),
                 refresh_on_startup: true,
+                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -2399,6 +2493,7 @@ mod tests {
                 enable: true,
                 interval: Duration::from_secs(3600),
                 refresh_on_startup: true,
+                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -2431,15 +2526,11 @@ mod tests {
             "startup sync should have enqueued at least 1 episode, got: {commands_received}"
         );
 
-        // Verify a file was downloaded
-        let files: Vec<_> = std::fs::read_dir(&download_dir)
-            .expect("read download dir")
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_file())
-            .collect();
+        // Verify a file was downloaded (in per-podcast subdirectory)
+        let has_downloaded_file = walkdir(&download_dir);
 
         assert!(
-            !files.is_empty(),
+            has_downloaded_file,
             "startup sync should have downloaded at least 1 file"
         );
     }
