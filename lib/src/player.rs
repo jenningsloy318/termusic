@@ -449,6 +449,10 @@ pub mod playlist_helpers {
     }
 
     impl PlaylistAddTrack {
+        /// Sentinel value indicating tracks should be appended at the end of the playlist.
+        /// Any `at_index >= playlist.len()` triggers end-append behavior in `Playlist::add_tracks`.
+        pub const AT_END: u64 = u64::MAX;
+
         #[must_use]
         pub fn new_single(at_index: u64, track: PlaylistTrackSource) -> Self {
             Self {
@@ -460,6 +464,24 @@ pub mod playlist_helpers {
         #[must_use]
         pub fn new_vec(at_index: u64, tracks: Vec<PlaylistTrackSource>) -> Self {
             Self { at_index, tracks }
+        }
+
+        /// Create a request to append a single track at the end of the playlist.
+        #[must_use]
+        pub fn new_append_single(track: PlaylistTrackSource) -> Self {
+            Self {
+                at_index: Self::AT_END,
+                tracks: vec![track],
+            }
+        }
+
+        /// Create a request to append multiple tracks at the end of the playlist.
+        #[must_use]
+        pub fn new_append_vec(tracks: Vec<PlaylistTrackSource>) -> Self {
+            Self {
+                at_index: Self::AT_END,
+                tracks,
+            }
         }
     }
 
