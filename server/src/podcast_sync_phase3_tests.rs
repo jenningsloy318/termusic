@@ -28,7 +28,7 @@ mod phase3_sync_logic_tests {
     use termusiclib::config::v2::server::synchronization::{AutoEnqueue, SynchronizationSettings};
     use termusiclib::config::v2::server::{PodcastSettings, ServerSettings};
     use termusiclib::config::{ServerOverlay, SharedServerSettings, new_shared_server_settings};
-    use termusiclib::player::playlist_helpers::{PlaylistAddTrack, PlaylistTrackSource};
+    use termusiclib::player::playlist_helpers::PlaylistTrackSource;
     use termusiclib::podcast::PodcastNoId;
     use termusiclib::podcast::db::Database;
     use termusiclib::podcast::episode::EpisodeNoId;
@@ -39,7 +39,7 @@ mod phase3_sync_logic_tests {
 
     // Import the module under test — these functions MUST exist after Phase 3
     use crate::podcast_sync::{
-        self, ExistingFilesMap, MINIMUM_SYNC_INTERVAL, SyncPassStats, find_episodes_to_download,
+        self, ExistingFilesMap, MINIMUM_SYNC_INTERVAL, find_episodes_to_download,
         should_download_episode, sync_once,
     };
 

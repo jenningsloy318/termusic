@@ -15,33 +15,14 @@
 
 #[cfg(test)]
 mod phase1_server_handler_tests {
-    use termusiclib::config::v2::server::PodcastSettings;
-    use termusiclib::config::v2::server::ServerSettings;
-    use termusiclib::config::{ServerOverlay, SharedServerSettings, new_shared_server_settings};
     use termusiclib::podcast::PodcastNoId;
     use termusiclib::podcast::db::Database;
     use termusicplayback::{EpisodeDownloadRequest, PlayerCmd, PlayerCmdSender};
     use tokio::sync::mpsc::unbounded_channel;
 
-    use std::path::Path;
-
     // =========================================================================
-    // Helper: create a SharedServerSettings with test config
+    // Helper: create command channel for testing
     // =========================================================================
-
-    fn make_test_config(download_dir: &Path) -> SharedServerSettings {
-        let settings = ServerSettings {
-            podcast: PodcastSettings {
-                download_dir: download_dir.to_path_buf(),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        new_shared_server_settings(ServerOverlay {
-            settings,
-            ..Default::default()
-        })
-    }
 
     fn make_cmd_channel() -> (
         PlayerCmdSender,

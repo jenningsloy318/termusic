@@ -43,16 +43,39 @@ pub struct SyncPassStats {
     pub episodes_failed: usize,
 }
 
+/// Derive the sanitized stem of an episode filename, matching the logic in
+/// `lib/src/podcast/mod.rs` download path construction. The download system
+/// produces filenames like: `<sanitized_title>_<pubdate>.ext`
+/// This function returns the sanitized title portion used for substring matching.
+#[must_use]
+pub fn derive_episode_filename_stem(title: &str) -> String {
+    use sanitize_filename::{Options as SanitizeOptions, sanitize_with_options};
+    sanitize_with_options(
+        title,
+        SanitizeOptions {
+            truncate: true,
+            windows: true,
+            replacement: "",
+        },
+    )
+}
+
 /// Determine if an episode should be downloaded.
-/// Skip if: (1) file already exists on disk, or (2) played AND file was deleted.
+/// Skip if: (1) file already exists on disk (matched by sanitized title substring), or
+/// (2) played AND file was deleted.
 /// Download if: file does not exist AND episode is not played.
 #[must_use]
 pub fn should_download_episode(
     episode: &Episode,
     existing_filenames: &HashSet<String>,
-    expected_filename: &str,
+    sanitized_title_stem: &str,
 ) -> bool {
-    let file_exists = existing_filenames.contains(expected_filename);
+    // Check if any file in the directory contains the sanitized title stem.
+    // On-disk files are named: `<idx> - <sanitized_title>_<pubdate>.<ext>`
+    // We match by checking if any filename contains the sanitized title portion.
+    let file_exists = existing_filenames
+        .iter()
+        .any(|fname| fname.contains(sanitized_title_stem));
     if file_exists {
         // File already present — skip regardless of played status (SCENARIO-020)
         return false;
@@ -84,9 +107,9 @@ pub fn find_episodes_to_download<'a>(
             if ep.path.is_some() {
                 return false;
             }
-            // Use episode title as the expected filename for matching
-            let expected_filename = ep.title.clone();
-            should_download_episode(ep, existing_filenames, &expected_filename)
+            // Derive the sanitized filename stem matching the download naming convention
+            let sanitized_stem = derive_episode_filename_stem(&ep.title);
+            should_download_episode(ep, existing_filenames, &sanitized_stem)
         })
         .collect();
 
@@ -919,17 +942,18 @@ mod tests {
         assert_eq!(cmd.tracks[0], track);
     }
 
-    /// The enqueue logic should use PlaylistTrackSource::Path for local files.
-    /// AC-06, SCENARIO-014: Downloaded episode uses local file path.
+    /// The enqueue logic should use PlaylistTrackSource::PodcastUrl even when the
+    /// episode has been downloaded locally.
+    /// AC-14, SCENARIO-021: Podcast episodes always use PodcastUrl source.
     #[test]
-    fn enqueue_uses_path_source_for_local_files() {
-        let file_path = "/home/user/podcasts/episode_new.mp3";
-        let track = PlaylistTrackSource::Path(file_path.to_string());
+    fn enqueue_uses_podcast_url_source_for_episodes() {
+        let episode_url = "http://localhost/feed/episode1.mp3";
+        let track = PlaylistTrackSource::PodcastUrl(episode_url.to_string());
         let cmd = PlaylistAddTrack::new_append_single(track);
 
         match &cmd.tracks[0] {
-            PlaylistTrackSource::Path(p) => assert_eq!(p, file_path),
-            _ => panic!("Expected PlaylistTrackSource::Path for downloaded episode"),
+            PlaylistTrackSource::PodcastUrl(url) => assert_eq!(url, episode_url),
+            _ => panic!("Expected PlaylistTrackSource::PodcastUrl for podcast episode"),
         }
     }
 
