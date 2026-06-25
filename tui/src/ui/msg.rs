@@ -815,7 +815,11 @@ pub enum PCMsg {
     SearchSuccess(Vec<PodcastFeed>),
     SearchError(String),
 
+    /// Podcast sync result from server callback (retained for stream update integration).
+    #[allow(dead_code)]
     SyncResult(PodcastSyncResult),
+    /// Podcast download result from server callback (retained for stream update integration).
+    #[allow(dead_code)]
     DLResult(PodcastDLResult),
 }
 

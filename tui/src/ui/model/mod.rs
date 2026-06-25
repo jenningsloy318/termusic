@@ -310,9 +310,9 @@ pub struct Model {
 
     youtube_options: YoutubeOptions,
     pub download_tracker: DownloadTracker,
-    /// Taskpool to limit number of active network requests
-    ///
-    /// Currently only used for podcast sync & download
+    /// Taskpool to limit number of active network requests.
+    /// Retained for future use when podcast download progress tracking is added.
+    #[allow(dead_code)]
     pub taskpool: TaskPool,
 }
 
