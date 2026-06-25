@@ -298,6 +298,27 @@ fn prepare_download_plan(
     })
 }
 
+/// Scan a podcast's download directory for existing filenames using async I/O.
+/// Returns an empty set if the directory cannot be created or read.
+async fn scan_podcast_dir(config: &termusiclib::config::ServerOverlay, title: &str) -> HashSet<String> {
+    let dir_path = match create_podcast_dir(config, title.to_owned()) {
+        Ok(p) => p,
+        Err(err) => {
+            warn!("Failed to scan directory for podcast '{title}': {err}");
+            return HashSet::new();
+        }
+    };
+    let mut filenames = HashSet::new();
+    if let Ok(mut dir) = tokio::fs::read_dir(&dir_path).await {
+        while let Ok(Some(entry)) = dir.next_entry().await {
+            if let Ok(name) = entry.file_name().into_string() {
+                filenames.insert(name);
+            }
+        }
+    }
+    filenames
+}
+
 /// Execute one full sync pass: fetch due feeds, identify new episodes,
 /// download them, and optionally enqueue them on the playlist.
 ///
@@ -331,34 +352,17 @@ pub async fn sync_once(
         .map(|p| (p.id, p.title.clone(), p.url.clone()))
         .collect();
 
-    // Pre-scan filesystem via spawn_blocking to avoid blocking I/O in async (AC-15)
+    // Pre-scan filesystem for existing episode files (AC-15)
     let config_snapshot = config.read().clone();
     let due_titles: Vec<(i64, String)> = due_podcasts_full
         .iter()
         .map(|(id, title, _url)| (*id, title.clone()))
         .collect();
-    let existing_files: ExistingFilesMap = tokio::task::spawn_blocking(move || {
-        let mut file_map: ExistingFilesMap = HashMap::new();
-        for (pod_id, title) in &due_titles {
-            match create_podcast_dir(&config_snapshot, title.clone()) {
-                Ok(dir_path) => {
-                    let filenames: HashSet<String> = std::fs::read_dir(&dir_path)
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|entry| entry.ok())
-                        .filter_map(|entry| entry.file_name().into_string().ok())
-                        .collect();
-                    file_map.insert(*pod_id, filenames);
-                }
-                Err(err) => {
-                    eprintln!("Failed to scan directory for podcast '{title}': {err}");
-                }
-            }
-        }
-        file_map
-    })
-    .await
-    .context("sync_once: pre-scan task panicked")?;
+    let mut existing_files: ExistingFilesMap = HashMap::new();
+    for (pod_id, title) in &due_titles {
+        let filenames = scan_podcast_dir(&config_snapshot, title).await;
+        existing_files.insert(*pod_id, filenames);
+    }
 
     let shared_task_pool = TaskPool::new(concurrent_downloads_max);
     let (feed_tx, mut feed_rx) = unbounded_channel();
