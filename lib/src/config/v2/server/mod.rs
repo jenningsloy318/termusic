@@ -10,11 +10,16 @@ use serde::{Deserialize, Serialize};
 use crate::track::MediaTypesSimple;
 use backends::BackendSettings;
 use metadata::MetadataSettings;
+use synchronization::SynchronizationSettings;
 
 pub mod backends;
 /// Extra things necessary for a config file, like wrappers for versioning
 pub mod config_extra;
 pub mod metadata;
+pub mod synchronization;
+
+#[cfg(test)]
+mod synchronization_tests;
 
 pub type MusicDirsOwned = Vec<PathBuf>;
 
@@ -27,6 +32,8 @@ pub struct ServerSettings {
     pub podcast: PodcastSettings,
     pub backends: BackendSettings,
     pub metadata: MetadataSettings,
+    /// Podcast synchronization settings (automatic feed refresh and download).
+    pub synchronization: SynchronizationSettings,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -649,6 +656,7 @@ mod v1_interop {
                 podcast: podcast_settings,
                 backends: BackendSettings::default(),
                 metadata: MetadataSettings::default(),
+                synchronization: super::SynchronizationSettings::default(),
             })
         }
     }
