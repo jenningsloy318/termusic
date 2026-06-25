@@ -547,6 +547,17 @@ fn player_loop(
             PlayerCmd::PlaylistRemoveDeletedTracks => {
                 player.playlist.write().remove_deleted_items();
             }
+            PlayerCmd::PodcastFeedRefresh => {
+                info!("PlayerCmd::PodcastFeedRefresh received");
+                // TODO: Phase 1 stub — actual feed refresh implementation will be added in Phase 3
+            }
+            PlayerCmd::PodcastDownloadEpisodes(requests) => {
+                info!(
+                    "PlayerCmd::PodcastDownloadEpisodes received, {} episodes requested",
+                    requests.len()
+                );
+                // TODO: Phase 1 stub — actual download dispatch implementation will be added in Phase 3
+            }
             PlayerCmd::MetadataChanged => {
                 trace!("Metadata changed");
                 if let Some(track) = player.run_info.read().current_track() {
