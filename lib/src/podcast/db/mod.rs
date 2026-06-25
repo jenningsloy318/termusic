@@ -279,6 +279,15 @@ impl Database {
         Ok(())
     }
 
+    /// Get the title of a podcast by its database ID.
+    pub fn get_podcast_title(&self, podcast_id: PodcastDBId) -> Result<String> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT title FROM podcasts WHERE id = ?;")?;
+        let title = stmt.query_row(params![podcast_id], |row| row.get(0))?;
+        Ok(title)
+    }
+
     /// Generates list of all podcasts in database.
     /// TODO: This should probably use a JOIN statement instead.
     pub fn get_podcasts(&self) -> Result<Vec<Podcast>> {

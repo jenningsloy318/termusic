@@ -329,6 +329,18 @@ pub async fn sync_once(
     cmd_tx: &PlayerCmdSender,
     db_path: &Path,
 ) -> Result<SyncPassStats> {
+    sync_once_with_interval(config, cmd_tx, db_path, None).await
+}
+
+/// Execute one full sync pass with an optional interval override.
+/// When `interval_override` is `Some(0)`, all podcasts are treated as due
+/// (used for manual refresh). When `None`, the config interval is used.
+pub async fn sync_once_with_interval(
+    config: &SharedServerSettings,
+    cmd_tx: &PlayerCmdSender,
+    db_path: &Path,
+    interval_override: Option<i64>,
+) -> Result<SyncPassStats> {
     let mut stats = SyncPassStats::default();
     let db = Database::new(db_path).context("sync_once: opening podcast database")?;
 
@@ -337,7 +349,8 @@ pub async fn sync_once(
     let podcast_settings = config.read().settings.podcast.clone();
     let concurrent_downloads_max = usize::from(podcast_settings.concurrent_downloads_max.get());
     let max_download_retries = usize::from(podcast_settings.max_download_retries);
-    let interval_secs = sync_settings.interval.as_secs() as i64;
+    let interval_secs = interval_override
+        .unwrap_or(sync_settings.interval.as_secs() as i64);
 
     let due_podcasts = db
         .due_podcasts(interval_secs)

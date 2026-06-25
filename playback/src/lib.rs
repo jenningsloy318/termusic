@@ -150,6 +150,8 @@ pub enum PlayerCmd {
     PodcastFeedRefresh,
     /// Request download of specific episodes (triggered from TUI).
     PodcastDownloadEpisodes(Vec<EpisodeDownloadRequest>),
+    /// Request to add a new podcast by feed URL.
+    PodcastAddFeed(String),
 }
 
 /// Download request for a single podcast episode.

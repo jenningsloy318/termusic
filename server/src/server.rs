@@ -556,15 +556,209 @@ fn player_loop(
                 player.playlist.write().remove_deleted_items();
             }
             PlayerCmd::PodcastFeedRefresh => {
-                info!("PlayerCmd::PodcastFeedRefresh received");
-                // TODO: Phase 1 stub — actual feed refresh implementation will be added in Phase 3
+                info!("PlayerCmd::PodcastFeedRefresh received — manual feed refresh");
+                let config = player.config.clone();
+                let cmd_tx = player.cmd_tx.clone();
+                let db_path = utils::get_app_config_path()
+                    .unwrap_or_else(|_| PathBuf::from("."));
+                // Spawn async sync with interval=0 to refresh ALL podcasts
+                tokio::spawn(async move {
+                    match podcast_sync::sync_once_with_interval(
+                        &config,
+                        &cmd_tx,
+                        &db_path,
+                        Some(0),
+                    )
+                    .await
+                    {
+                        Ok(stats) => {
+                            info!(
+                                "Manual feed refresh complete: {} checked, {} downloaded",
+                                stats.podcasts_checked, stats.episodes_downloaded
+                            );
+                        }
+                        Err(err) => {
+                            error!("Manual feed refresh failed: {err:#}");
+                        }
+                    }
+                });
             }
             PlayerCmd::PodcastDownloadEpisodes(requests) => {
                 info!(
                     "PlayerCmd::PodcastDownloadEpisodes received, {} episodes requested",
                     requests.len()
                 );
-                // TODO: Phase 1 stub — actual download dispatch implementation will be added in Phase 3
+                let config = player.config.clone();
+                let stream_tx = player.stream_tx.clone();
+                let db_path = utils::get_app_config_path()
+                    .unwrap_or_else(|_| PathBuf::from("."));
+
+                tokio::spawn(async move {
+                    let db = match podcast::db::Database::new(&db_path) {
+                        Ok(db) => db,
+                        Err(err) => {
+                            error!("Failed to open podcast DB for download: {err:#}");
+                            return;
+                        }
+                    };
+                    let config_read = config.read().clone();
+                    let max_retries =
+                        usize::from(config_read.settings.podcast.max_download_retries);
+                    let concurrent_max =
+                        usize::from(config_read.settings.podcast.concurrent_downloads_max.get());
+                    let taskpool = termusiclib::taskpool::TaskPool::new(concurrent_max);
+
+                    for req in requests {
+                        let podcast_title = db
+                            .get_podcast_title(req.podcast_id)
+                            .unwrap_or_else(|_| "unknown".to_string());
+
+                        let download_dir = match utils::create_podcast_dir(
+                            &config_read,
+                            podcast_title,
+                        ) {
+                            Ok(dir) => dir,
+                            Err(err) => {
+                                warn!("Failed to create podcast dir: {err}");
+                                continue;
+                            }
+                        };
+
+                        let ep_data = podcast::EpData {
+                            id: 0,
+                            pod_id: req.podcast_id,
+                            title: req.episode_title.clone(),
+                            url: req.episode_url.clone(),
+                            pubdate: None,
+                            file_path: None,
+                        };
+
+                        let stream_tx_clone = stream_tx.clone();
+                        podcast::download_list(
+                            vec![ep_data],
+                            &download_dir,
+                            max_retries,
+                            &taskpool,
+                            move |msg| {
+                                if let podcast::PodcastDLResult::DLComplete(ref ep) = msg {
+                                    let _ = stream_tx_clone.send(
+                                        termusiclib::player::UpdateEvents::PodcastSync(
+                                            termusiclib::player::UpdatePodcastSyncEvents::Progress {
+                                                podcast_title: ep.title.clone(),
+                                                episodes_found: 0,
+                                                episodes_downloaded: 1,
+                                            },
+                                        ),
+                                    );
+                                }
+                            },
+                        );
+                    }
+                });
+            }
+            PlayerCmd::PodcastAddFeed(url) => {
+                info!("PlayerCmd::PodcastAddFeed received: {url}");
+                let config = player.config.clone();
+                let _cmd_tx = player.cmd_tx.clone();
+                let db_path = utils::get_app_config_path()
+                    .unwrap_or_else(|_| PathBuf::from("."));
+                let stream_tx = player.stream_tx.clone();
+
+                tokio::spawn(async move {
+                    let db = match podcast::db::Database::new(&db_path) {
+                        Ok(db) => db,
+                        Err(err) => {
+                            error!("Failed to open podcast DB for add feed: {err:#}");
+                            return;
+                        }
+                    };
+                    let config_read = config.read().clone();
+                    let max_retries =
+                        usize::from(config_read.settings.podcast.max_download_retries);
+                    let concurrent_max =
+                        usize::from(config_read.settings.podcast.concurrent_downloads_max.get());
+                    let taskpool = termusiclib::taskpool::TaskPool::new(concurrent_max);
+                    let feed = podcast::PodcastFeed::new(None, url, None);
+
+                    let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
+                    podcast::check_feed(
+                        feed,
+                        max_retries,
+                        &taskpool,
+                        move |msg| {
+                            let _ = result_tx.send(msg);
+                        },
+                    );
+
+                    // Process the result when it arrives
+                    if let Some(msg) = result_rx.recv().await {
+                        match msg {
+                            podcast::PodcastSyncResult::FetchPodcastStart(_) => {
+                                // Wait for the actual data
+                                if let Some(data_msg) = result_rx.recv().await {
+                                    match data_msg {
+                                        podcast::PodcastSyncResult::NewData(pod_data) => {
+                                            if let Err(e) = db.insert_podcast(&pod_data) {
+                                                error!("Failed to insert new podcast: {e:#?}");
+                                            }
+                                            let _ = stream_tx.send(
+                                                termusiclib::player::UpdateEvents::PodcastSync(
+                                                    termusiclib::player::UpdatePodcastSyncEvents::Complete(
+                                                        termusiclib::player::PodcastSyncCompleteStats {
+                                                            podcasts_checked: 1,
+                                                            podcasts_failed: 0,
+                                                            episodes_downloaded: 0,
+                                                            episodes_enqueued: 0,
+                                                        },
+                                                    ),
+                                                ),
+                                            );
+                                        }
+                                        podcast::PodcastSyncResult::Error(feed) => {
+                                            let _ = stream_tx.send(
+                                                termusiclib::player::UpdateEvents::PodcastSync(
+                                                    termusiclib::player::UpdatePodcastSyncEvents::Error {
+                                                        podcast_title: feed.title.unwrap_or_default(),
+                                                        error_message: format!("Feed fetch failed: {}", feed.url),
+                                                    },
+                                                ),
+                                            );
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            podcast::PodcastSyncResult::NewData(pod_data) => {
+                                if let Err(e) = db.insert_podcast(&pod_data) {
+                                    error!("Failed to insert new podcast: {e:#?}");
+                                }
+                                let _ = stream_tx.send(
+                                    termusiclib::player::UpdateEvents::PodcastSync(
+                                        termusiclib::player::UpdatePodcastSyncEvents::Complete(
+                                            termusiclib::player::PodcastSyncCompleteStats {
+                                                podcasts_checked: 1,
+                                                podcasts_failed: 0,
+                                                episodes_downloaded: 0,
+                                                episodes_enqueued: 0,
+                                            },
+                                        ),
+                                    ),
+                                );
+                            }
+                            podcast::PodcastSyncResult::Error(feed) => {
+                                let _ = stream_tx.send(
+                                    termusiclib::player::UpdateEvents::PodcastSync(
+                                        termusiclib::player::UpdatePodcastSyncEvents::Error {
+                                            podcast_title: feed.title.unwrap_or_default(),
+                                            error_message: format!("Feed fetch failed: {}", feed.url),
+                                        },
+                                    ),
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                });
             }
             PlayerCmd::MetadataChanged => {
                 trace!("Metadata changed");
