@@ -260,7 +260,7 @@ impl Track {
             Ok(v) => v,
             Err(err) => {
                 // not being able to read metadata is not fatal, we will just have less information about it
-                warn!(
+                debug!(
                     "Failed to read metadata from \"{}\": {}",
                     path.display(),
                     err
