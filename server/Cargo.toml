@@ -22,11 +22,13 @@ path = "src/server.rs"
 termusic-lib.workspace = true # = {path = "../lib/"}
 termusic-playback = { workspace = true, default-features = false }
 anyhow.workspace = true
+chrono.workspace = true
 ctrlc.workspace = true
 log.workspace = true
 flexi_logger.workspace = true
 colored.workspace = true
 parking_lot.workspace = true
+rusqlite.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true

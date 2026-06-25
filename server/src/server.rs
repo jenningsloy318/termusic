@@ -34,6 +34,10 @@ mod connection;
 mod logger;
 mod music_player_service;
 mod podcast_sync;
+#[cfg(test)]
+mod podcast_sync_phase3_tests;
+#[cfg(test)]
+mod podcast_sync_scenario011_tests;
 
 #[macro_use]
 extern crate log;

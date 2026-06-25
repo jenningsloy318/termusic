@@ -5488,6 +5488,7 @@ dependencies = [
  "flexi_logger",
  "log",
  "parking_lot",
+ "rusqlite",
  "sanitize-filename",
  "serde",
  "tempfile",

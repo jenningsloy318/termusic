@@ -437,6 +437,25 @@ impl Database {
 
         Ok(())
     }
+
+    /// Retrieve podcasts that are due for a feed check, using the internal connection.
+    /// Wraps the standalone `get_due_podcasts` function.
+    pub fn due_podcasts(
+        &self,
+        global_interval_secs: i64,
+    ) -> Result<Vec<podcast_db::PodcastDB>, rusqlite::Error> {
+        get_due_podcasts(global_interval_secs, &self.conn)
+    }
+
+    /// Update only the `last_checked` timestamp for a podcast, using the internal connection.
+    /// Wraps the standalone `update_last_checked` function.
+    pub fn set_last_checked(
+        &self,
+        id: PodcastDBId,
+        timestamp: DateTime<Utc>,
+    ) -> Result<usize, rusqlite::Error> {
+        update_last_checked(id, timestamp, &self.conn)
+    }
 }
 
 /// Helper function converting an (optional) Unix timestamp to a
