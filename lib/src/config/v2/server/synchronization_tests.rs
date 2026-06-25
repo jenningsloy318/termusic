@@ -201,28 +201,4 @@ interval = "3600"
         };
         assert_ne!(a, b);
     }
-
-    /// SynchronizationSettings should implement Clone.
-    #[test]
-    fn synchronization_settings_clone() {
-        let original = SynchronizationSettings {
-            interval: Duration::from_secs(900),
-            refresh_on_startup: true,
-            max_new_episodes: 3,
-            auto_enqueue: AutoEnqueue::Disabled,
-        };
-        let cloned = original.clone();
-        assert_eq!(original, cloned);
-    }
-
-    /// SynchronizationSettings should implement Debug.
-    #[test]
-    fn synchronization_settings_debug() {
-        let settings = SynchronizationSettings::default();
-        let debug_str = format!("{:?}", settings);
-        assert!(debug_str.contains("SynchronizationSettings"));
-        assert!(debug_str.contains("interval"));
-        assert!(debug_str.contains("refresh_on_startup"));
-        assert!(debug_str.contains("auto_enqueue"));
-    }
 }

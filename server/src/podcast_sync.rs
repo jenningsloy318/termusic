@@ -526,57 +526,8 @@ mod tests {
     }
 
     // =========================================================================
-    // T-13: SyncPassStats struct definition
+    // SyncPassStats behavior tests
     // =========================================================================
-
-    /// SyncPassStats must exist and have the correct fields for logging sync results.
-    /// This tests the existence of the struct and its fields.
-    #[test]
-    fn sync_pass_stats_struct_has_required_fields() {
-        let stats = SyncPassStats {
-            podcasts_checked: 5,
-            podcasts_failed: 1,
-            episodes_downloaded: 10,
-            episodes_enqueued: 9,
-            episodes_failed: 1,
-        };
-
-        assert_eq!(stats.podcasts_checked, 5);
-        assert_eq!(stats.podcasts_failed, 1);
-        assert_eq!(stats.episodes_downloaded, 10);
-        assert_eq!(stats.episodes_enqueued, 9);
-        assert_eq!(stats.episodes_failed, 1);
-    }
-
-    /// SyncPassStats with all zeros should represent a pass with nothing to do.
-    #[test]
-    fn sync_pass_stats_all_zeros() {
-        let stats = SyncPassStats {
-            podcasts_checked: 0,
-            podcasts_failed: 0,
-            episodes_downloaded: 0,
-            episodes_enqueued: 0,
-            episodes_failed: 0,
-        };
-
-        assert_eq!(stats.podcasts_checked, 0);
-        assert_eq!(stats.episodes_downloaded, 0);
-    }
-
-    /// SyncPassStats should implement Debug for logging purposes.
-    #[test]
-    fn sync_pass_stats_implements_debug() {
-        let stats = SyncPassStats {
-            podcasts_checked: 3,
-            podcasts_failed: 0,
-            episodes_downloaded: 7,
-            episodes_enqueued: 7,
-            episodes_failed: 0,
-        };
-        let debug_str = format!("{:?}", stats);
-        assert!(debug_str.contains("podcasts_checked"));
-        assert!(debug_str.contains("episodes_downloaded"));
-    }
 
     // =========================================================================
     // T-14: sync_once with empty podcast list (SCENARIO-021)
@@ -621,6 +572,12 @@ mod tests {
             result.is_err(),
             "sync_once should fail with invalid db path"
         );
+        // AC-23: Check specific error content, not just is_err()
+        let error_message = format!("{:#}", result.unwrap_err());
+        assert!(
+            error_message.contains("database") || error_message.contains("opening"),
+            "Error message should indicate database opening failure. Got: {error_message}"
+        );
     }
 
     // =========================================================================
@@ -640,7 +597,7 @@ mod tests {
         let db = Database::new(db_path).expect("create database");
         let podcast = PodcastNoId {
             title: "Unreachable Podcast".to_string(),
-            url: "http://192.0.2.1:1/nonexistent_feed.xml".to_string(),
+            url: "http://127.0.0.1:1/nonexistent_feed.xml".to_string(),
             description: None,
             author: None,
             explicit: None,
@@ -675,7 +632,7 @@ mod tests {
         // Insert a podcast with an unreachable feed
         let bad_podcast = PodcastNoId {
             title: "Bad Feed".to_string(),
-            url: "http://192.0.2.1:1/bad_feed.xml".to_string(),
+            url: "http://127.0.0.1:1/bad_feed.xml".to_string(),
             description: None,
             author: None,
             explicit: None,
@@ -689,7 +646,7 @@ mod tests {
         // but for a unit test we just verify the error isolation behavior)
         let good_podcast = PodcastNoId {
             title: "Also Bad Feed".to_string(),
-            url: "http://192.0.2.2:1/another_bad_feed.xml".to_string(),
+            url: "http://127.0.0.1:2/another_bad_feed.xml".to_string(),
             description: None,
             author: None,
             explicit: None,
@@ -733,7 +690,7 @@ mod tests {
         // Insert a podcast with one existing episode
         let existing_episode = EpisodeNoId {
             title: "Existing Episode".to_string(),
-            url: "https://example.com/existing.mp3".to_string(),
+            url: "http://127.0.0.1/existing.mp3".to_string(),
             guid: "existing-guid-001".to_string(),
             description: "Already in DB".to_string(),
             pubdate: None,
@@ -742,7 +699,7 @@ mod tests {
         };
         let podcast = PodcastNoId {
             title: "Test Podcast".to_string(),
-            url: "http://192.0.2.1:1/feed.xml".to_string(), // unreachable -- feed fetch will fail
+            url: "http://127.0.0.1:1/feed.xml".to_string(), // unreachable -- feed fetch will fail
             description: None,
             author: None,
             explicit: None,
@@ -789,7 +746,7 @@ mod tests {
         // Insert podcast with an episode that has a GUID
         let episode = EpisodeNoId {
             title: "Known Episode".to_string(),
-            url: "https://example.com/known.mp3".to_string(),
+            url: "http://127.0.0.1/known.mp3".to_string(),
             guid: "known-guid-abc".to_string(),
             description: String::new(),
             pubdate: None,
@@ -798,7 +755,7 @@ mod tests {
         };
         let podcast = PodcastNoId {
             title: "GUID Dedup Test".to_string(),
-            url: "http://192.0.2.1:1/guid_dedup_feed.xml".to_string(),
+            url: "http://127.0.0.1:1/guid_dedup_feed.xml".to_string(),
             description: None,
             author: None,
             explicit: None,
@@ -833,7 +790,7 @@ mod tests {
         // Insert a podcast with an episode that has already been downloaded (has a path)
         let episode = EpisodeNoId {
             title: "Downloaded Episode".to_string(),
-            url: "https://example.com/downloaded.mp3".to_string(),
+            url: "http://127.0.0.1/downloaded.mp3".to_string(),
             guid: "downloaded-guid-xyz".to_string(),
             description: String::new(),
             pubdate: None,
@@ -842,7 +799,7 @@ mod tests {
         };
         let podcast = PodcastNoId {
             title: "Queue Dedup Test".to_string(),
-            url: "http://192.0.2.1:1/queue_dedup_feed.xml".to_string(),
+            url: "http://127.0.0.1:1/queue_dedup_feed.xml".to_string(),
             description: None,
             author: None,
             explicit: None,
@@ -916,7 +873,7 @@ mod tests {
         // Insert a podcast (feed will be unreachable in unit test)
         let podcast = PodcastNoId {
             title: "Enqueue Test".to_string(),
-            url: "http://192.0.2.1:1/enqueue_feed.xml".to_string(),
+            url: "http://127.0.0.1:1/enqueue_feed.xml".to_string(),
             description: None,
             author: None,
             explicit: None,
@@ -972,43 +929,6 @@ mod tests {
     }
 
     // =========================================================================
-    // sync_once function signature and return type validation
-    // =========================================================================
-
-    /// sync_once should accept SharedServerSettings, PlayerCmdSender, and Path refs.
-    /// This test validates the function signature compiles correctly.
-    #[tokio::test]
-    async fn sync_once_accepts_expected_parameters() {
-        let tmp_dir = tempfile::tempdir().expect("create temp dir");
-        let db_path = tmp_dir.path();
-        let _db = Database::new(db_path).expect("create database");
-
-        let config = make_test_config(db_path);
-        let (cmd_tx, _rx) = make_cmd_channel();
-
-        // This call validates that sync_once has the expected signature:
-        // async fn sync_once(config: &SharedServerSettings, cmd_tx: &PlayerCmdSender, db_path: &Path) -> Result<SyncPassStats>
-        let result: anyhow::Result<SyncPassStats> = sync_once(&config, &cmd_tx, db_path).await;
-        assert!(result.is_ok());
-    }
-
-    /// sync_once return type must be anyhow::Result<SyncPassStats>.
-    #[tokio::test]
-    async fn sync_once_returns_anyhow_result_of_sync_pass_stats() {
-        let tmp_dir = tempfile::tempdir().expect("create temp dir");
-        let db_path = tmp_dir.path();
-        let _db = Database::new(db_path).expect("create database");
-
-        let config = make_test_config(db_path);
-        let (cmd_tx, _rx) = make_cmd_channel();
-
-        let result = sync_once(&config, &cmd_tx, db_path).await;
-
-        // Explicitly type-check the result
-        let _stats: SyncPassStats = result.expect("should return SyncPassStats on success");
-    }
-
-    // =========================================================================
     // Edge cases
     // =========================================================================
 
@@ -1025,7 +945,7 @@ mod tests {
         // Insert podcast with two episodes
         let ep1 = EpisodeNoId {
             title: "Episode With Path".to_string(),
-            url: "https://example.com/ep1.mp3".to_string(),
+            url: "http://127.0.0.1/ep1.mp3".to_string(),
             guid: "ep1-has-path".to_string(),
             description: String::new(),
             pubdate: None,
@@ -1034,7 +954,7 @@ mod tests {
         };
         let ep2 = EpisodeNoId {
             title: "Episode Without Path".to_string(),
-            url: "https://example.com/ep2.mp3".to_string(),
+            url: "http://127.0.0.1/ep2.mp3".to_string(),
             guid: "ep2-no-path".to_string(),
             description: String::new(),
             pubdate: None,
@@ -1043,7 +963,7 @@ mod tests {
         };
         let podcast = PodcastNoId {
             title: "Mixed Episodes".to_string(),
-            url: "http://192.0.2.1:1/mixed_feed.xml".to_string(),
+            url: "http://127.0.0.1:1/mixed_feed.xml".to_string(),
             description: None,
             author: None,
             explicit: None,
@@ -1102,7 +1022,7 @@ mod tests {
         let episodes: Vec<EpisodeNoId> = (0..100)
             .map(|i| EpisodeNoId {
                 title: format!("Episode {i}"),
-                url: format!("https://example.com/ep{i}.mp3"),
+                url: format!("http://127.0.0.1/ep{i}.mp3"),
                 guid: format!("guid-{i:04}"),
                 description: String::new(),
                 pubdate: None,
@@ -1113,7 +1033,7 @@ mod tests {
 
         let podcast = PodcastNoId {
             title: "Large Podcast".to_string(),
-            url: "http://192.0.2.1:1/large_feed.xml".to_string(),
+            url: "http://127.0.0.1:1/large_feed.xml".to_string(),
             description: None,
             author: None,
             explicit: None,
@@ -1548,7 +1468,7 @@ mod tests {
         let db = Database::new(&db_path).expect("create database");
         let podcast = PodcastNoId {
             title: "Startup Sync Test".to_string(),
-            url: "http://192.0.2.1:1/startup_test.xml".to_string(),
+            url: "http://127.0.0.1:1/startup_test.xml".to_string(),
             description: None,
             author: None,
             explicit: None,
@@ -1628,7 +1548,7 @@ mod tests {
 <rss version="2.0">
     <channel>
         <title>{title}</title>
-        <link>http://example.com</link>
+        <link>http://127.0.0.1</link>
         <description>A test podcast</description>
         {items}
     </channel>
@@ -1926,7 +1846,7 @@ mod tests {
                 (
                     "Existing Episode",
                     "guid-existing-001",
-                    "http://example.com/old.mp3",
+                    "http://127.0.0.1/old.mp3",
                 ),
                 (
                     "New Episode",
@@ -1966,7 +1886,7 @@ mod tests {
         // Insert podcast with one existing episode already in the DB
         let existing_episode = EpisodeNoId {
             title: "Existing Episode".to_string(),
-            url: "http://example.com/old.mp3".to_string(),
+            url: "http://127.0.0.1/old.mp3".to_string(),
             guid: "guid-existing-001".to_string(),
             description: "Already known".to_string(),
             pubdate: None,
@@ -2323,7 +2243,7 @@ mod tests {
         // Use a URL pointing to a non-routable address for the bad episode.
         // The download_list implementation only returns DLResponseError when
         // the TCP connection itself fails (not on HTTP 4xx/5xx status codes).
-        let bad_ep_url = "http://192.0.2.1:1/episodes/unreachable.mp3";
+        let bad_ep_url = "http://127.0.0.1:1/episodes/unreachable.mp3";
 
         let feed_xml = generate_rss_feed(
             "Partial Download Podcast",
@@ -2702,7 +2622,7 @@ mod tests {
 <rss version="2.0">
     <channel>
         <title>URL Dedup Podcast</title>
-        <link>http://example.com</link>
+        <link>http://127.0.0.1</link>
         <description>Tests URL-based dedup</description>
         <item>
             <title>Already Known By URL</title>

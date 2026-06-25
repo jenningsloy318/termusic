@@ -75,4 +75,5 @@ all-backends = ["gst", "mpv", "rusty-soundtouch"]
 [dev-dependencies]
 tempfile.workspace = true
 chrono.workspace = true
+indoc.workspace = true
 wiremock.workspace = true

@@ -5486,6 +5486,7 @@ dependencies = [
  "colored",
  "ctrlc",
  "flexi_logger",
+ "indoc",
  "log",
  "parking_lot",
  "rusqlite",
