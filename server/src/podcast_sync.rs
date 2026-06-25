@@ -65,7 +65,7 @@ pub async fn sync_once(
     let (download_dir, concurrent_downloads_max, max_download_retries, max_new_episodes) = {
         let config_read = config.read();
         let podcast_settings = &config_read.settings.podcast;
-        let sync_settings = &config_read.settings.synchronization;
+        let sync_settings = &config_read.settings.podcast.synchronization;
         (
             podcast_settings.download_dir.clone(),
             usize::from(podcast_settings.concurrent_downloads_max.get()),
@@ -81,10 +81,8 @@ pub async fn sync_once(
     let (feed_tx, mut feed_rx) = unbounded_channel();
 
     // Dispatch feed fetch tasks for all podcasts
-    let pod_titles: HashMap<i64, String> = podcasts
-        .iter()
-        .map(|p| (p.id, p.title.clone()))
-        .collect();
+    let pod_titles: HashMap<i64, String> =
+        podcasts.iter().map(|p| (p.id, p.title.clone())).collect();
     for podcast in &podcasts {
         let feed = PodcastFeed::new(
             Some(podcast.id),
@@ -151,11 +149,8 @@ pub async fn sync_once(
                                 // and register them in DB without re-downloading
                                 let mut episodes_to_download = Vec::new();
                                 for (idx, ep) in undownloaded.into_iter().take(limit) {
-                                    let ep_title = format!(
-                                        "{:03} - {}",
-                                        total_episodes - idx,
-                                        ep.title
-                                    );
+                                    let ep_title =
+                                        format!("{:03} - {}", total_episodes - idx, ep.title);
                                     let sanitized_title = sanitize_with_options(
                                         &ep_title,
                                         Options {
@@ -169,34 +164,33 @@ pub async fn sync_once(
                                     let existing_file = if sanitized_title.is_empty() {
                                         None // avoid starts_with("") matching any file
                                     } else {
-                                        std::fs::read_dir(&pod_download_dir)
-                                            .ok()
-                                            .and_then(|entries| {
-                                                entries
-                                                    .flatten()
-                                                    .map(|e| e.path())
-                                                    .find(|p| {
-                                                        p.file_stem()
-                                                            .and_then(|s| s.to_str())
-                                                            .is_some_and(|name| {
-                                                                name.starts_with(&sanitized_title)
-                                                            })
-                                                    })
-                                            })
+                                        std::fs::read_dir(&pod_download_dir).ok().and_then(
+                                            |entries| {
+                                                entries.flatten().map(|e| e.path()).find(|p| {
+                                                    p.file_stem()
+                                                        .and_then(|s| s.to_str())
+                                                        .is_some_and(|name| {
+                                                            name.starts_with(&sanitized_title)
+                                                        })
+                                                })
+                                            },
+                                        )
                                     };
 
                                     if let Some(file_path) = existing_file {
                                         // File exists on disk — register in DB and enqueue
                                         if let Err(err) = db.insert_file(ep.id, &file_path) {
-                                            warn!("Failed to register existing file in DB: {err:#?}");
+                                            warn!(
+                                                "Failed to register existing file in DB: {err:#?}"
+                                            );
                                         } else {
                                             let track = PlaylistTrackSource::Path(
                                                 file_path.to_string_lossy().to_string(),
                                             );
                                             let add_cmd =
                                                 PlaylistAddTrack::new_append_single(track);
-                                            if let Err(err) = cmd_tx
-                                                .send(PlayerCmd::PlaylistAddTrack(add_cmd))
+                                            if let Err(err) =
+                                                cmd_tx.send(PlayerCmd::PlaylistAddTrack(add_cmd))
                                             {
                                                 warn!("Failed to enqueue existing episode: {err}");
                                             } else {
@@ -218,7 +212,10 @@ pub async fn sync_once(
 
                                 if !episodes_to_download.is_empty() {
                                     if let Err(err) = std::fs::create_dir_all(&pod_download_dir) {
-                                        warn!("Failed to create podcast download dir {}: {err}", pod_download_dir.display());
+                                        warn!(
+                                            "Failed to create podcast download dir {}: {err}",
+                                            pod_download_dir.display()
+                                        );
                                         continue;
                                     }
 
@@ -265,7 +262,10 @@ pub async fn sync_once(
                                                         stats.episodes_enqueued += 1;
                                                     }
                                                 } else {
-                                                    warn!("DLComplete but file_path is None for episode: {}", ep_data.title);
+                                                    warn!(
+                                                        "DLComplete but file_path is None for episode: {}",
+                                                        ep_data.title
+                                                    );
                                                 }
                                             }
                                             PodcastDLResult::DLStart(_) => {
@@ -325,7 +325,7 @@ pub async fn sync_once(
 ///
 /// The task exits cleanly when `cancel_token` is cancelled (server shutdown).
 ///
-/// Only call this function when `config.read().settings.synchronization.enable` is true.
+/// Only call this function when `config.read().settings.podcast.synchronization.interval > Duration::ZERO`.
 pub fn start_podcast_sync_task(
     handle: tokio::runtime::Handle,
     cancel_token: tokio_util::sync::CancellationToken,
@@ -335,7 +335,7 @@ pub fn start_podcast_sync_task(
 ) {
     handle.spawn(async move {
         let (interval_duration, refresh_on_startup) = {
-            let settings = &config.read().settings.synchronization;
+            let settings = &config.read().settings.podcast.synchronization;
             (settings.interval, settings.refresh_on_startup)
         };
 
@@ -408,13 +408,13 @@ mod tests {
         let settings = ServerSettings {
             podcast: PodcastSettings {
                 download_dir: download_dir.to_path_buf(),
+                synchronization: SynchronizationSettings {
+                    interval: Duration::from_secs(3600),
+                    refresh_on_startup: true,
+                    max_new_episodes: 5,
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            synchronization: SynchronizationSettings {
-                enable: true,
-                interval: Duration::from_secs(3600),
-                refresh_on_startup: true,
-                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -1172,9 +1172,9 @@ mod tests {
         // The task should have exited cleanly via the select! branch on cancelled().
     }
 
-    /// When synchronization.enable is false, start_podcast_sync_task should NOT
+    /// When synchronization interval is zero, start_podcast_sync_task should NOT
     /// be called by the server. This test verifies the gating logic by checking
-    /// that the config field is accessible and the enable flag controls behavior.
+    /// that the config field is accessible and zero interval controls behavior.
     /// AC-02, SCENARIO-005: Sync task not spawned when disabled.
     #[tokio::test]
     async fn sync_task_not_spawned_when_disabled() {
@@ -1182,17 +1182,17 @@ mod tests {
         let db_path = tmp_dir.path().to_path_buf();
         let _db = Database::new(&db_path).expect("create database");
 
-        // Create config with synchronization disabled
+        // Create config with synchronization disabled (interval = ZERO)
         let settings = ServerSettings {
             podcast: PodcastSettings {
                 download_dir: db_path.clone(),
+                synchronization: SynchronizationSettings {
+                    interval: Duration::ZERO,
+                    refresh_on_startup: false,
+                    max_new_episodes: 5,
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            synchronization: SynchronizationSettings {
-                enable: false,
-                interval: Duration::from_secs(60),
-                refresh_on_startup: true,
-                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -1201,12 +1201,13 @@ mod tests {
             ..Default::default()
         });
 
-        // Verify the gating condition: when enable is false, the task should
+        // Verify the gating condition: when interval is zero, the task should
         // not be spawned. This mirrors the check in actual_main().
-        let should_spawn = config.read().settings.synchronization.enable;
+        let should_spawn =
+            config.read().settings.podcast.synchronization.interval > std::time::Duration::ZERO;
         assert!(
             !should_spawn,
-            "Sync task should NOT be spawned when enable is false"
+            "Sync task should NOT be spawned when interval is zero"
         );
     }
 
@@ -1227,13 +1228,13 @@ mod tests {
         let settings = ServerSettings {
             podcast: PodcastSettings {
                 download_dir: db_path.clone(),
+                synchronization: SynchronizationSettings {
+                    interval: Duration::from_secs(3600), // 1 hour -- won't fire in test
+                    refresh_on_startup: true,
+                    max_new_episodes: 5,
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            synchronization: SynchronizationSettings {
-                enable: true,
-                interval: Duration::from_secs(3600), // 1 hour -- won't fire in test
-                refresh_on_startup: true,
-                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -1277,13 +1278,13 @@ mod tests {
         let settings = ServerSettings {
             podcast: PodcastSettings {
                 download_dir: db_path.clone(),
+                synchronization: SynchronizationSettings {
+                    interval: Duration::from_secs(3600), // won't fire in test
+                    refresh_on_startup: false,
+                    max_new_episodes: 5,
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            synchronization: SynchronizationSettings {
-                enable: true,
-                interval: Duration::from_secs(3600), // won't fire in test
-                refresh_on_startup: false,
-                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -1329,13 +1330,13 @@ mod tests {
         let settings = ServerSettings {
             podcast: PodcastSettings {
                 download_dir: db_path.clone(),
+                synchronization: SynchronizationSettings {
+                    interval: Duration::from_millis(50),
+                    refresh_on_startup: false, // skip startup sync to isolate periodic behavior
+                    max_new_episodes: 5,
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            synchronization: SynchronizationSettings {
-                enable: true,
-                interval: Duration::from_millis(50),
-                refresh_on_startup: false, // skip startup sync to isolate periodic behavior
-                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -1377,13 +1378,13 @@ mod tests {
         let settings = ServerSettings {
             podcast: PodcastSettings {
                 download_dir: db_path.clone(),
+                synchronization: SynchronizationSettings {
+                    interval: Duration::from_secs(3600), // 1 hour
+                    refresh_on_startup: false,
+                    max_new_episodes: 5,
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            synchronization: SynchronizationSettings {
-                enable: true,
-                interval: Duration::from_secs(3600), // 1 hour
-                refresh_on_startup: false,
-                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -1472,13 +1473,13 @@ mod tests {
         let settings = ServerSettings {
             podcast: PodcastSettings {
                 download_dir: db_path.clone(),
+                synchronization: SynchronizationSettings {
+                    interval: Duration::from_secs(3600),
+                    refresh_on_startup: true,
+                    max_new_episodes: 5,
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            synchronization: SynchronizationSettings {
-                enable: true,
-                interval: Duration::from_secs(3600),
-                refresh_on_startup: true,
-                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -1723,8 +1724,7 @@ mod tests {
         let downloaded_files = count_files_recursive(&download_dir);
 
         assert_eq!(
-            downloaded_files,
-            2,
+            downloaded_files, 2,
             "should have 2 downloaded files in the directory"
         );
     }
@@ -2306,13 +2306,13 @@ mod tests {
             podcast: PodcastSettings {
                 download_dir: download_dir.clone(),
                 max_download_retries: 1,
+                synchronization: SynchronizationSettings {
+                    interval: Duration::from_secs(3600),
+                    refresh_on_startup: true,
+                    max_new_episodes: 5,
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            synchronization: SynchronizationSettings {
-                enable: true,
-                interval: Duration::from_secs(3600),
-                refresh_on_startup: true,
-                max_new_episodes: 5,
             },
             ..Default::default()
         };
@@ -2494,13 +2494,13 @@ mod tests {
         let settings = ServerSettings {
             podcast: PodcastSettings {
                 download_dir: download_dir.clone(),
+                synchronization: SynchronizationSettings {
+                    interval: Duration::from_secs(3600),
+                    refresh_on_startup: true,
+                    max_new_episodes: 5,
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            synchronization: SynchronizationSettings {
-                enable: true,
-                interval: Duration::from_secs(3600),
-                refresh_on_startup: true,
-                max_new_episodes: 5,
             },
             ..Default::default()
         };

@@ -21,6 +21,9 @@ pub mod synchronization;
 #[cfg(test)]
 mod synchronization_tests;
 
+#[cfg(test)]
+mod phase2_config_tests;
+
 pub type MusicDirsOwned = Vec<PathBuf>;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
@@ -32,8 +35,6 @@ pub struct ServerSettings {
     pub podcast: PodcastSettings,
     pub backends: BackendSettings,
     pub metadata: MetadataSettings,
-    /// Podcast synchronization settings (automatic feed refresh and download).
-    pub synchronization: SynchronizationSettings,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -47,6 +48,8 @@ pub struct PodcastSettings {
     pub max_download_retries: u8,
     /// Directory for downloaded Podcasts
     pub download_dir: PathBuf,
+    /// Periodic synchronization settings. Absent or interval=0 means disabled.
+    pub synchronization: SynchronizationSettings,
 }
 
 /// Get the default podcast dir, which uses OS-specific paths, or home/Music/podcast
@@ -66,6 +69,7 @@ impl Default for PodcastSettings {
             concurrent_downloads_max: NonZeroU8::new(3).unwrap(),
             max_download_retries: 3,
             download_dir: default_podcast_dir(),
+            synchronization: SynchronizationSettings::default(),
         }
     }
 }
@@ -527,7 +531,7 @@ mod v1_interop {
     use super::{
         Backend, ComSettings, LoopMode, NonZeroU8, NonZeroU32, PlayerSettings, PodcastSettings,
         PositionYesNo, PositionYesNoLower, RememberLastPosition, ScanDepth, SeekStep,
-        ServerSettings, backends::BackendSettings,
+        ServerSettings, SynchronizationSettings, backends::BackendSettings,
     };
     use crate::config::{
         v1,
@@ -612,6 +616,7 @@ mod v1_interop {
                 })?,
                 max_download_retries: value.podcast_max_retries.clamp(0, u8::MAX as usize) as u8,
                 download_dir: value.podcast_dir,
+                synchronization: SynchronizationSettings::default(),
             };
 
             let player_settings = PlayerSettings {
@@ -656,7 +661,6 @@ mod v1_interop {
                 podcast: podcast_settings,
                 backends: BackendSettings::default(),
                 metadata: MetadataSettings::default(),
-                synchronization: super::SynchronizationSettings::default(),
             })
         }
     }
@@ -686,7 +690,8 @@ mod v1_interop {
                 PodcastSettings {
                     concurrent_downloads_max: NonZeroU8::new(3).unwrap(),
                     max_download_retries: 3,
-                    download_dir: PathBuf::new()
+                    download_dir: PathBuf::new(),
+                    ..Default::default()
                 }
             );
 

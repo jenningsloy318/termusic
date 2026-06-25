@@ -18,8 +18,8 @@ mod phase1_server_handler_tests {
     use termusiclib::config::v2::server::PodcastSettings;
     use termusiclib::config::v2::server::ServerSettings;
     use termusiclib::config::{ServerOverlay, SharedServerSettings, new_shared_server_settings};
-    use termusiclib::podcast::db::Database;
     use termusiclib::podcast::PodcastNoId;
+    use termusiclib::podcast::db::Database;
     use termusicplayback::{EpisodeDownloadRequest, PlayerCmd, PlayerCmdSender};
     use tokio::sync::mpsc::unbounded_channel;
 
@@ -303,7 +303,6 @@ mod phase1_server_handler_tests {
         // Verify the function exists and is importable
         use termusiclib::podcast::export_to_opml;
         // We just need this to compile - the function signature check is sufficient
-        let _fn_ptr: fn(&std::path::Path, &std::path::Path) -> anyhow::Result<()> =
-            export_to_opml;
+        let _fn_ptr: fn(&std::path::Path, &std::path::Path) -> anyhow::Result<()> = export_to_opml;
     }
 }

@@ -13,6 +13,8 @@ use super::{Episode, EpisodeNoId, Podcast, PodcastNoId, RE_ARTICLES};
 use crate::track::Track;
 use podcast_db::{PodcastDB, PodcastDBInsertable};
 
+pub use podcast_db::{get_due_podcasts, update_last_checked};
+
 mod episode_db;
 mod file_db;
 mod migration;
@@ -301,7 +303,7 @@ impl Database {
                     description: podcast.description,
                     author: podcast.author,
                     explicit: podcast.explicit,
-                    last_checked: podcast.last_checked,
+                    last_checked: podcast.last_checked.unwrap_or_default(),
                     episodes,
                     image_url: podcast.image_url,
                 })
@@ -455,3 +457,6 @@ mod test_utils {
         Connection::open_in_memory().expect("open db failed")
     }
 }
+
+#[cfg(test)]
+mod phase2_db_tests;

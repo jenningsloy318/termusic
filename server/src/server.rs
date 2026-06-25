@@ -173,7 +173,7 @@ async fn actual_main() -> Result<()> {
     start_playlist_save_interval(tokio_handle.clone(), cancel_token, playlist_c);
 
     // Spawn the periodic podcast sync task if enabled (AC-02, AC-11, SCENARIO-005, SCENARIO-020)
-    if config.read().settings.synchronization.enable {
+    if config.read().settings.podcast.synchronization.interval > std::time::Duration::ZERO {
         let config_dir = utils::get_app_config_path().context("sync task: config path")?;
         podcast_sync::start_podcast_sync_task(
             tokio_handle.clone(),

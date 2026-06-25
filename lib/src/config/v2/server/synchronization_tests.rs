@@ -1,12 +1,15 @@
 //! Tests for `SynchronizationSettings` configuration struct.
 //!
-//! These tests cover Phase 1 of Server-Side Podcast Synchronization:
-//! - AC-01: Config section existence with correct defaults
-//! - AC-10: Config serialization roundtrip
-//! - SCENARIO-001: Default config when section absent
-//! - SCENARIO-002: Explicit non-default values honored
-//! - SCENARIO-003: Roundtrip preserves all fields
-//! - SCENARIO-004: Invalid duration string rejected
+//! These tests cover the podcast synchronization config after Phase 2 redesign:
+//! - AC-04: Config section nested under [podcast.synchronization]
+//! - AC-05: interval=0 (or absent) means disabled; no boolean enable flag
+//! - AC-06: refresh_on_startup defaults to false
+//! - AC-07: Duration defaults have human-readable comments
+//! - AC-11: AutoEnqueue enum with Enabled/Disabled variants
+//! - SCENARIO-006: Config parsed from [podcast.synchronization]
+//! - SCENARIO-007: Interval value of zero disables periodic sync
+//! - SCENARIO-008: Absent interval setting disables periodic sync
+//! - SCENARIO-009: Refresh-on-startup can be explicitly disabled
 
 #[cfg(test)]
 mod tests {
@@ -14,51 +17,29 @@ mod tests {
 
     use pretty_assertions::assert_eq;
 
-    use crate::config::v2::server::ServerSettings;
-    use crate::config::v2::server::synchronization::SynchronizationSettings;
+    use crate::config::v2::server::synchronization::{AutoEnqueue, SynchronizationSettings};
 
     // =========================================================================
-    // SCENARIO-001 / AC-01: Default synchronization config applied when section absent
+    // Default values after Phase 2 redesign
     // =========================================================================
 
-    /// When a TOML config has no `[synchronization]` section, the defaults should apply:
-    /// - enable: true
-    /// - interval: 1 hour (3600 seconds)
-    /// - refresh_on_startup: true
-    #[test]
-    fn default_config_when_synchronization_section_absent() {
-        // A minimal server config TOML without any [synchronization] section
-        let toml_str = r#"
-[com]
-port = 5101
-
-[player]
-volume = 30
-
-[podcast]
-max_download_retries = 3
-"#;
-
-        let settings: ServerSettings =
-            toml::from_str(toml_str).expect("should parse without error");
-
-        assert_eq!(settings.synchronization.enable, true);
-        assert_eq!(settings.synchronization.interval, Duration::from_secs(3600));
-        assert_eq!(settings.synchronization.refresh_on_startup, true);
-    }
-
-    /// The Default impl for SynchronizationSettings should produce the documented defaults.
+    /// The Default impl for SynchronizationSettings should produce disabled-by-default values.
     #[test]
     fn default_impl_produces_correct_values() {
         let defaults = SynchronizationSettings::default();
 
-        assert_eq!(defaults.enable, true);
-        assert_eq!(defaults.interval, Duration::from_secs(3600));
-        assert_eq!(defaults.refresh_on_startup, true);
+        // AC-05: interval=ZERO means disabled
+        assert_eq!(defaults.interval, Duration::ZERO);
+        // AC-06: refresh_on_startup defaults to false
+        assert_eq!(defaults.refresh_on_startup, false);
+        // max_new_episodes defaults to 5
+        assert_eq!(defaults.max_new_episodes, 5);
+        // auto_enqueue defaults to Enabled
+        assert_eq!(defaults.auto_enqueue, AutoEnqueue::Enabled);
     }
 
     // =========================================================================
-    // SCENARIO-002 / AC-01: Explicit synchronization configuration honored
+    // Deserialization from TOML
     // =========================================================================
 
     /// When the config TOML specifies all synchronization fields explicitly with
@@ -66,26 +47,25 @@ max_download_retries = 3
     #[test]
     fn explicit_non_default_values_deserialized_correctly() {
         let toml_str = r#"
-[synchronization]
-enable = false
 interval = "30m"
-refresh_on_startup = false
+refresh_on_startup = true
+max_new_episodes = 10
+auto_enqueue = "disabled"
 "#;
 
         let settings: SynchronizationSettings =
             toml::from_str(toml_str).expect("should parse explicit values");
 
-        assert_eq!(settings.enable, false);
         assert_eq!(settings.interval, Duration::from_secs(30 * 60));
-        assert_eq!(settings.refresh_on_startup, false);
+        assert_eq!(settings.refresh_on_startup, true);
+        assert_eq!(settings.max_new_episodes, 10);
+        assert_eq!(settings.auto_enqueue, AutoEnqueue::Disabled);
     }
 
     /// Test with a different non-default interval value to prevent hardcoding.
     #[test]
     fn explicit_interval_2h30m_deserialized_correctly() {
         let toml_str = r#"
-[synchronization]
-enable = true
 interval = "2h30m"
 refresh_on_startup = true
 "#;
@@ -100,7 +80,6 @@ refresh_on_startup = true
     #[test]
     fn explicit_interval_seconds_only() {
         let toml_str = r#"
-[synchronization]
 interval = "45s"
 "#;
 
@@ -111,7 +90,7 @@ interval = "45s"
     }
 
     // =========================================================================
-    // SCENARIO-003 / AC-01, AC-10: Configuration roundtrip preserves all fields
+    // Configuration roundtrip preserves all fields
     // =========================================================================
 
     /// Serializing and then deserializing SynchronizationSettings with non-default
@@ -119,10 +98,10 @@ interval = "45s"
     #[test]
     fn serialization_roundtrip_preserves_all_fields() {
         let original = SynchronizationSettings {
-            enable: false,
             interval: Duration::from_secs(1800), // 30 minutes
-            refresh_on_startup: false,
-            max_new_episodes: 5,
+            refresh_on_startup: true,
+            max_new_episodes: 10,
+            auto_enqueue: AutoEnqueue::Disabled,
         };
 
         let serialized = toml::to_string(&original).expect("should serialize");
@@ -144,35 +123,15 @@ interval = "45s"
         assert_eq!(original, deserialized);
     }
 
-    /// Roundtrip with a complex interval value (multi-unit duration).
-    #[test]
-    fn serialization_roundtrip_complex_interval() {
-        let original = SynchronizationSettings {
-            enable: true,
-            interval: Duration::from_secs(5 * 3600 + 15 * 60 + 30), // 5h15m30s
-            refresh_on_startup: true,
-            max_new_episodes: 5,
-        };
-
-        let serialized = toml::to_string(&original).expect("should serialize complex interval");
-        let deserialized: SynchronizationSettings =
-            toml::from_str(&serialized).expect("should deserialize complex interval roundtrip");
-
-        assert_eq!(original, deserialized);
-    }
-
     // =========================================================================
-    // SCENARIO-004 / AC-01: Invalid interval duration string rejected
+    // Invalid duration string rejected
     // =========================================================================
 
     /// An unparseable duration string should produce a deserialization error.
     #[test]
     fn invalid_duration_string_produces_error() {
         let toml_str = r#"
-[synchronization]
-enable = true
 interval = "not_a_duration"
-refresh_on_startup = true
 "#;
 
         let result = toml::from_str::<SynchronizationSettings>(toml_str);
@@ -187,7 +146,6 @@ refresh_on_startup = true
     #[test]
     fn empty_duration_string_produces_error() {
         let toml_str = r#"
-[synchronization]
 interval = ""
 "#;
 
@@ -203,7 +161,6 @@ interval = ""
     #[test]
     fn numeric_without_unit_produces_error() {
         let toml_str = r#"
-[synchronization]
 interval = "3600"
 "#;
 
@@ -216,90 +173,6 @@ interval = "3600"
     }
 
     // =========================================================================
-    // AC-01: Backward compatibility - ServerSettings parses with synchronization
-    // =========================================================================
-
-    /// Full ServerSettings should parse correctly even when synchronization section
-    /// is present with all fields specified.
-    #[test]
-    fn server_settings_with_explicit_synchronization_section() {
-        let toml_str = r#"
-[com]
-port = 5101
-
-[player]
-volume = 30
-
-[podcast]
-max_download_retries = 3
-
-[synchronization]
-enable = true
-interval = "2h"
-refresh_on_startup = false
-"#;
-
-        let settings: ServerSettings =
-            toml::from_str(toml_str).expect("should parse full server settings");
-
-        assert_eq!(settings.synchronization.enable, true);
-        assert_eq!(settings.synchronization.interval, Duration::from_secs(7200));
-        assert_eq!(settings.synchronization.refresh_on_startup, false);
-    }
-
-    /// ServerSettings with a completely empty config should use all defaults including
-    /// synchronization defaults.
-    #[test]
-    fn server_settings_empty_config_uses_all_defaults() {
-        let toml_str = "";
-
-        let settings: ServerSettings =
-            toml::from_str(toml_str).expect("should parse empty config with defaults");
-
-        assert_eq!(settings.synchronization.enable, true);
-        assert_eq!(settings.synchronization.interval, Duration::from_secs(3600));
-        assert_eq!(settings.synchronization.refresh_on_startup, true);
-    }
-
-    // =========================================================================
-    // AC-01: Partial synchronization section (some fields missing, use defaults)
-    // =========================================================================
-
-    /// When only `enable` is specified, other fields should use defaults.
-    #[test]
-    fn partial_synchronization_section_uses_defaults_for_missing_fields() {
-        let toml_str = r#"
-[synchronization]
-enable = false
-"#;
-
-        let settings: SynchronizationSettings =
-            toml::from_str(toml_str).expect("should parse partial config");
-
-        assert_eq!(settings.enable, false);
-        // interval should default to 1h
-        assert_eq!(settings.interval, Duration::from_secs(3600));
-        // refresh_on_startup should default to true
-        assert_eq!(settings.refresh_on_startup, true);
-    }
-
-    /// When only `interval` is specified, other fields should use defaults.
-    #[test]
-    fn partial_synchronization_only_interval_specified() {
-        let toml_str = r#"
-[synchronization]
-interval = "15m"
-"#;
-
-        let settings: SynchronizationSettings =
-            toml::from_str(toml_str).expect("should parse interval-only config");
-
-        assert_eq!(settings.enable, true);
-        assert_eq!(settings.interval, Duration::from_secs(15 * 60));
-        assert_eq!(settings.refresh_on_startup, true);
-    }
-
-    // =========================================================================
     // Struct-level properties
     // =========================================================================
 
@@ -307,10 +180,10 @@ interval = "15m"
     #[test]
     fn synchronization_settings_equality() {
         let a = SynchronizationSettings {
-            enable: true,
-            interval: Duration::from_secs(3600),
-            refresh_on_startup: true,
+            interval: Duration::ZERO,
+            refresh_on_startup: false,
             max_new_episodes: 5,
+            auto_enqueue: AutoEnqueue::Enabled,
         };
         let b = SynchronizationSettings::default();
         assert_eq!(a, b);
@@ -321,10 +194,10 @@ interval = "15m"
     fn synchronization_settings_inequality() {
         let a = SynchronizationSettings::default();
         let b = SynchronizationSettings {
-            enable: false,
             interval: Duration::from_secs(1800),
-            refresh_on_startup: false,
-            max_new_episodes: 5,
+            refresh_on_startup: true,
+            max_new_episodes: 10,
+            auto_enqueue: AutoEnqueue::Disabled,
         };
         assert_ne!(a, b);
     }
@@ -333,10 +206,10 @@ interval = "15m"
     #[test]
     fn synchronization_settings_clone() {
         let original = SynchronizationSettings {
-            enable: false,
             interval: Duration::from_secs(900),
-            refresh_on_startup: false,
-            max_new_episodes: 5,
+            refresh_on_startup: true,
+            max_new_episodes: 3,
+            auto_enqueue: AutoEnqueue::Disabled,
         };
         let cloned = original.clone();
         assert_eq!(original, cloned);
@@ -348,8 +221,8 @@ interval = "15m"
         let settings = SynchronizationSettings::default();
         let debug_str = format!("{:?}", settings);
         assert!(debug_str.contains("SynchronizationSettings"));
-        assert!(debug_str.contains("enable"));
         assert!(debug_str.contains("interval"));
         assert!(debug_str.contains("refresh_on_startup"));
+        assert!(debug_str.contains("auto_enqueue"));
     }
 }

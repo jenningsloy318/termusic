@@ -124,6 +124,31 @@ pub struct TrackChangedInfo {
     pub progress: Option<PlayerProgress>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PodcastSyncCompleteStats {
+    pub podcasts_checked: u64,
+    pub podcasts_failed: u64,
+    pub episodes_downloaded: u64,
+    pub episodes_enqueued: u64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum UpdatePodcastSyncEvents {
+    Started {
+        total_podcasts: u64,
+    },
+    Progress {
+        podcast_title: String,
+        episodes_found: u64,
+        episodes_downloaded: u64,
+    },
+    Complete(PodcastSyncCompleteStats),
+    Error {
+        podcast_title: String,
+        error_message: String,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum UpdateEvents {
     MissedEvents { amount: u64 },
@@ -134,6 +159,7 @@ pub enum UpdateEvents {
     GaplessChanged { gapless: bool },
     PlaylistChanged(UpdatePlaylistEvents),
     Progress(PlayerProgress),
+    PodcastSync(UpdatePodcastSyncEvents),
 }
 
 // might not be fully true, but necessary for Msg
@@ -177,6 +203,7 @@ impl From<UpdateEvents> for protobuf::StreamUpdates {
             }
             UpdateEvents::PlaylistChanged(ev) => StreamTypes::PlaylistChanged(ev.into()),
             UpdateEvents::Progress(ev) => StreamTypes::ProgressChanged(ev.into()),
+            UpdateEvents::PodcastSync(ev) => StreamTypes::PodcastSync(ev.into()),
         };
 
         Self { r#type: Some(val) }
@@ -222,6 +249,83 @@ impl TryFrom<protobuf::StreamUpdates> for UpdateEvents {
                 ev.try_into()
                     .context("In \"StreamUpdates.types.progress_changed\"")?,
             ),
+            StreamTypes::PodcastSync(ev) => Self::PodcastSync(
+                ev.try_into()
+                    .context("In \"StreamUpdates.types.podcast_sync\"")?,
+            ),
+        };
+
+        Ok(res)
+    }
+}
+
+type PPodcastSyncTypes = protobuf::update_podcast_sync::Type;
+
+// server to grpc: UpdatePodcastSyncEvents -> protobuf::UpdatePodcastSync
+impl From<UpdatePodcastSyncEvents> for protobuf::UpdatePodcastSync {
+    fn from(value: UpdatePodcastSyncEvents) -> Self {
+        let val = match value {
+            UpdatePodcastSyncEvents::Started { total_podcasts } => {
+                PPodcastSyncTypes::Started(protobuf::PodcastSyncStarted { total_podcasts })
+            }
+            UpdatePodcastSyncEvents::Progress {
+                podcast_title,
+                episodes_found,
+                episodes_downloaded,
+            } => PPodcastSyncTypes::Progress(protobuf::PodcastSyncProgress {
+                podcast_title,
+                episodes_found,
+                episodes_downloaded,
+            }),
+            UpdatePodcastSyncEvents::Complete(stats) => {
+                PPodcastSyncTypes::Complete(protobuf::PodcastSyncComplete {
+                    podcasts_checked: stats.podcasts_checked,
+                    podcasts_failed: stats.podcasts_failed,
+                    episodes_downloaded: stats.episodes_downloaded,
+                    episodes_enqueued: stats.episodes_enqueued,
+                })
+            }
+            UpdatePodcastSyncEvents::Error {
+                podcast_title,
+                error_message,
+            } => PPodcastSyncTypes::Error(protobuf::PodcastSyncError {
+                podcast_title,
+                error_message,
+            }),
+        };
+
+        Self { r#type: Some(val) }
+    }
+}
+
+// grpc to client(tui): protobuf::UpdatePodcastSync -> UpdatePodcastSyncEvents
+impl TryFrom<protobuf::UpdatePodcastSync> for UpdatePodcastSyncEvents {
+    type Error = anyhow::Error;
+
+    fn try_from(
+        value: protobuf::UpdatePodcastSync,
+    ) -> Result<Self, <Self as TryFrom<protobuf::UpdatePodcastSync>>::Error> {
+        let value = unwrap_msg(value.r#type, "UpdatePodcastSync.type")?;
+
+        let res = match value {
+            PPodcastSyncTypes::Started(ev) => Self::Started {
+                total_podcasts: ev.total_podcasts,
+            },
+            PPodcastSyncTypes::Progress(ev) => Self::Progress {
+                podcast_title: ev.podcast_title,
+                episodes_found: ev.episodes_found,
+                episodes_downloaded: ev.episodes_downloaded,
+            },
+            PPodcastSyncTypes::Complete(ev) => Self::Complete(PodcastSyncCompleteStats {
+                podcasts_checked: ev.podcasts_checked,
+                podcasts_failed: ev.podcasts_failed,
+                episodes_downloaded: ev.episodes_downloaded,
+                episodes_enqueued: ev.episodes_enqueued,
+            }),
+            PPodcastSyncTypes::Error(ev) => Self::Error {
+                podcast_title: ev.podcast_title,
+                error_message: ev.error_message,
+            },
         };
 
         Ok(res)

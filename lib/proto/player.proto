@@ -101,7 +101,40 @@ message StreamUpdates {
     UpdateGaplessChanged gapless_changed = 6;
     UpdatePlaylist playlist_changed = 7;
     UpdateProgress progress_changed = 8;
+    UpdatePodcastSync podcast_sync = 9;
   }
+}
+
+// Podcast sync progress reporting from server to client
+message UpdatePodcastSync {
+  oneof type {
+    PodcastSyncStarted started = 1;
+    PodcastSyncProgress progress = 2;
+    PodcastSyncComplete complete = 3;
+    PodcastSyncError error = 4;
+  }
+}
+
+message PodcastSyncStarted {
+  uint64 total_podcasts = 1;
+}
+
+message PodcastSyncProgress {
+  string podcast_title = 1;
+  uint64 episodes_found = 2;
+  uint64 episodes_downloaded = 3;
+}
+
+message PodcastSyncComplete {
+  uint64 podcasts_checked = 1;
+  uint64 podcasts_failed = 2;
+  uint64 episodes_downloaded = 3;
+  uint64 episodes_enqueued = 4;
+}
+
+message PodcastSyncError {
+  string podcast_title = 1;
+  string error_message = 2;
 }
 
 // Indicate that some events could not be send
