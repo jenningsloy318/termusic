@@ -40,8 +40,7 @@ mod phase4_test_quality {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use crate::podcast_sync::{
-        SyncPassStats, find_episodes_to_download, should_download_episode,
-        sync_once,
+        SyncPassStats, find_episodes_to_download, should_download_episode, sync_once,
     };
 
     // =========================================================================
@@ -329,11 +328,7 @@ mod phase4_test_quality {
         let mut harness = TestHarness::new().await;
 
         let episode_download_path = "/episodes/localhost_test.mp3";
-        let episode_url = format!(
-            "{}{}",
-            harness.mock_server.uri(),
-            episode_download_path
-        );
+        let episode_url = format!("{}{}", harness.mock_server.uri(), episode_download_path);
 
         // Verify the URL is localhost/127.0.0.1 (AC-22)
         let server_uri = harness.mock_server.uri();
@@ -414,7 +409,10 @@ mod phase4_test_quality {
         let result = harness.run_sync().await;
 
         // AC-23: NOT just assert!(result.is_ok()) — check SPECIFIC failure stats
-        assert!(result.is_ok(), "sync_once itself should not error (per-podcast isolation)");
+        assert!(
+            result.is_ok(),
+            "sync_once itself should not error (per-podcast isolation)"
+        );
         let stats = result.unwrap();
 
         // Specific assertions about the error behavior:
@@ -472,7 +470,9 @@ mod phase4_test_quality {
         let feed_xml = feed_xml.replace("EPISODE_URL_PLACEHOLDER", &episode_url);
 
         harness.mount_feed("/indoc_feed.xml", &feed_xml).await;
-        harness.mount_episode_download("/episodes/indoc_ep.mp3").await;
+        harness
+            .mount_episode_download("/episodes/indoc_ep.mp3")
+            .await;
 
         harness.insert_podcast(&PodcastNoId {
             title: "Indoc Test Podcast".to_string(),
@@ -488,7 +488,10 @@ mod phase4_test_quality {
         let result = harness.run_sync().await;
         assert!(result.is_ok());
         let stats = result.unwrap();
-        assert_eq!(stats.episodes_downloaded, 1, "Feed constructed with indoc should parse correctly");
+        assert_eq!(
+            stats.episodes_downloaded, 1,
+            "Feed constructed with indoc should parse correctly"
+        );
     }
 
     // =========================================================================
@@ -521,10 +524,16 @@ mod phase4_test_quality {
         let episode_url = format!("{}/episodes/known.mp3", harness.mock_server.uri());
         let feed_xml = harness.generate_rss_feed(
             "Known Episode Podcast",
-            &[("Already Known Episode", "guid-already-known-001", &episode_url)],
+            &[(
+                "Already Known Episode",
+                "guid-already-known-001",
+                &episode_url,
+            )],
         );
 
-        harness.mount_feed("/known_episode_feed.xml", &feed_xml).await;
+        harness
+            .mount_feed("/known_episode_feed.xml", &feed_xml)
+            .await;
 
         harness.insert_podcast(&PodcastNoId {
             title: "Known Episode Podcast".to_string(),
@@ -609,7 +618,11 @@ mod phase4_test_quality {
 
         // AC-27: Verify OBSERVABLE outcomes via spy channel
         let commands = harness.collect_playlist_commands();
-        assert_eq!(commands.len(), 2, "Two episodes should produce two commands");
+        assert_eq!(
+            commands.len(),
+            2,
+            "Two episodes should produce two commands"
+        );
 
         // Each command should:
         // 1. Use AT_END index (appending behavior)
@@ -669,7 +682,10 @@ mod phase4_test_quality {
         let stats = result.unwrap();
 
         // Observable outcome: episodes downloaded but NOT enqueued
-        assert_eq!(stats.episodes_downloaded, 1, "Episode should still download");
+        assert_eq!(
+            stats.episodes_downloaded, 1,
+            "Episode should still download"
+        );
         assert_eq!(stats.episodes_enqueued, 0, "No enqueue when disabled");
 
         // AC-27: Observable absence — spy channel must be empty
@@ -796,7 +812,11 @@ mod phase4_test_quality {
 
         // One-liner to verify outcomes
         let commands = harness.collect_playlist_commands();
-        assert_eq!(commands.len(), 1, "TestHarness should support full flow with minimal setup");
+        assert_eq!(
+            commands.len(),
+            1,
+            "TestHarness should support full flow with minimal setup"
+        );
     }
 
     /// AC-26: TestHarness::with_enqueue allows customizing auto-enqueue behavior
@@ -807,7 +827,11 @@ mod phase4_test_quality {
         let harness_disabled = TestHarness::with_enqueue(AutoEnqueue::Disabled).await;
         let config_disabled = harness_disabled.config.read();
         assert_eq!(
-            config_disabled.settings.podcast.synchronization.auto_enqueue,
+            config_disabled
+                .settings
+                .podcast
+                .synchronization
+                .auto_enqueue,
             AutoEnqueue::Disabled,
             "AC-26: TestHarness should allow easy config customization"
         );
@@ -854,7 +878,10 @@ mod phase4_test_quality {
         );
 
         let result = should_download_episode(&episode, &existing_files, "nonexistent.mp3");
-        assert!(result, "Unplayed episode with missing file should be downloaded");
+        assert!(
+            result,
+            "Unplayed episode with missing file should be downloaded"
+        );
     }
 
     // =========================================================================
@@ -900,7 +927,11 @@ mod phase4_test_quality {
         let to_download = find_episodes_to_download(&episodes, &existing_files, 10);
 
         // AC-23: Specific assertion — check WHICH episode is included/excluded
-        assert_eq!(to_download.len(), 1, "Only episode without path should be included");
+        assert_eq!(
+            to_download.len(),
+            1,
+            "Only episode without path should be included"
+        );
         assert_eq!(
             to_download[0].id, 2,
             "AC-23: Specifically, episode ID 2 (no path) should be the one to download"
@@ -1072,4 +1103,3 @@ mod phase4_test_quality {
         );
     }
 }
-

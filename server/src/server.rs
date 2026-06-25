@@ -39,6 +39,8 @@ mod podcast_sync_phase3_tests;
 #[cfg(test)]
 mod podcast_sync_phase4_tests;
 #[cfg(test)]
+mod podcast_sync_phase5_tests;
+#[cfg(test)]
 mod podcast_sync_scenario011_tests;
 
 #[macro_use]

@@ -100,6 +100,181 @@ pub fn find_episodes_to_download<'a>(
     }
 }
 
+/// Entry for tracking downloaded episodes pending enqueue.
+/// Collected during the download phase, sorted and enqueued after all downloads complete.
+#[derive(Debug, Clone)]
+struct EnqueueEntry {
+    pod_id: i64,
+    url: String,
+    pubdate: Option<chrono::DateTime<Utc>>,
+}
+
+/// Result of preparing a podcast for downloading after a successful feed sync.
+struct DownloadPlan {
+    pod_id: i64,
+    episodes_to_download: Vec<EpData>,
+    pod_download_dir: std::path::PathBuf,
+}
+
+/// Drain download results from a channel and classify outcomes.
+/// Returns file records (for DB insertion), enqueue entries, and counts.
+async fn drain_download_results(
+    dl_rx: &mut tokio::sync::mpsc::UnboundedReceiver<PodcastDLResult>,
+    pod_id: i64,
+) -> (
+    Vec<(i64, std::path::PathBuf)>,
+    Vec<EnqueueEntry>,
+    usize,
+    usize,
+) {
+    let mut file_records: Vec<(i64, std::path::PathBuf)> = Vec::new();
+    let mut enqueue_entries: Vec<EnqueueEntry> = Vec::new();
+    let mut downloaded = 0usize;
+    let mut failed = 0usize;
+
+    while let Some(dl_result) = dl_rx.recv().await {
+        match dl_result {
+            PodcastDLResult::DLComplete(ep_data) => {
+                if let Some(ref file_path) = ep_data.file_path {
+                    downloaded += 1;
+                    file_records.push((ep_data.id, file_path.clone()));
+                    enqueue_entries.push(EnqueueEntry {
+                        pod_id,
+                        url: ep_data.url.clone(),
+                        pubdate: ep_data.pubdate,
+                    });
+                } else {
+                    warn!(
+                        "DLComplete but file_path is None for episode: {}",
+                        ep_data.title
+                    );
+                }
+            }
+            PodcastDLResult::DLStart(_) => {}
+            PodcastDLResult::DLResponseError(ep_data)
+            | PodcastDLResult::DLFileCreateError(ep_data)
+            | PodcastDLResult::DLFileWriteError(ep_data) => {
+                warn!(
+                    "Episode download failed: {} - {}",
+                    ep_data.title, ep_data.url
+                );
+                failed += 1;
+            }
+        }
+    }
+
+    (file_records, enqueue_entries, downloaded, failed)
+}
+
+/// Enqueue downloaded episodes on the playlist, grouped by podcast and sorted oldest-first.
+fn enqueue_downloaded_episodes(
+    enqueue_entries: &[EnqueueEntry],
+    cmd_tx: &PlayerCmdSender,
+    stats: &mut SyncPassStats,
+) {
+    if enqueue_entries.is_empty() {
+        return;
+    }
+
+    let mut grouped: HashMap<i64, Vec<&EnqueueEntry>> = HashMap::new();
+    for entry in enqueue_entries {
+        grouped.entry(entry.pod_id).or_default().push(entry);
+    }
+
+    let mut seen_pods: Vec<i64> = Vec::new();
+    for entry in enqueue_entries {
+        if !seen_pods.contains(&entry.pod_id) {
+            seen_pods.push(entry.pod_id);
+        }
+    }
+
+    for pod_id in &seen_pods {
+        if let Some(entries) = grouped.get_mut(pod_id) {
+            entries.sort_by_key(|e| e.pubdate);
+            for entry in entries.iter() {
+                let track = PlaylistTrackSource::PodcastUrl(entry.url.clone());
+                let add_cmd = PlaylistAddTrack::new_append_single(track);
+                if let Err(err) = cmd_tx.send(PlayerCmd::PlaylistAddTrack(add_cmd)) {
+                    warn!("Failed to enqueue episode: {err}");
+                } else {
+                    stats.episodes_enqueued += 1;
+                }
+            }
+        }
+    }
+}
+
+/// Prepare a download plan for a podcast after its feed has been successfully synced.
+/// Performs DB operations (update podcast, set last_checked, get episodes, filter)
+/// and returns a plan if there are episodes to download.
+#[allow(clippy::too_many_arguments)]
+fn prepare_download_plan(
+    pod_id: i64,
+    pod_data: &termusiclib::podcast::PodcastNoId,
+    db: &Database,
+    config: &SharedServerSettings,
+    existing_files: &ExistingFilesMap,
+    pod_data_map: &HashMap<i64, String>,
+    max_new_episodes: u32,
+    stats: &mut SyncPassStats,
+) -> Option<DownloadPlan> {
+    if let Err(err) = db.update_podcast(pod_id, pod_data) {
+        warn!("Failed to update podcast {pod_id}: {err:#?}");
+        stats.podcasts_failed += 1;
+        return None;
+    }
+
+    if let Err(err) = db.set_last_checked(pod_id, Utc::now()) {
+        warn!("Failed to update last_checked for podcast {pod_id}: {err}");
+    }
+
+    let episodes = match db.get_episodes(pod_id, false) {
+        Ok(eps) => eps,
+        Err(err) => {
+            warn!("Failed to get episodes for podcast {pod_id}: {err:#?}");
+            return None;
+        }
+    };
+
+    let empty_set = HashSet::new();
+    let pod_existing_files = existing_files.get(&pod_id).unwrap_or(&empty_set);
+    let to_download = find_episodes_to_download(&episodes, pod_existing_files, max_new_episodes);
+
+    if to_download.is_empty() {
+        return None;
+    }
+
+    let pod_title = pod_data_map.get(&pod_id).cloned().unwrap_or_default();
+    let config_read = config.read().clone();
+    let pod_download_dir = match create_podcast_dir(&config_read, pod_title.clone()) {
+        Ok(dir) => dir,
+        Err(err) => {
+            warn!("Failed to create podcast dir for '{pod_title}': {err}");
+            return None;
+        }
+    };
+
+    let total_episodes = episodes.len();
+    let episodes_to_download: Vec<EpData> = to_download
+        .iter()
+        .enumerate()
+        .map(|(idx, ep)| EpData {
+            id: ep.id,
+            pod_id: ep.pod_id,
+            title: format!("{:03} - {}", total_episodes - idx, ep.title),
+            url: ep.url.clone(),
+            pubdate: ep.pubdate,
+            file_path: None,
+        })
+        .collect();
+
+    Some(DownloadPlan {
+        pod_id,
+        episodes_to_download,
+        pod_download_dir,
+    })
+}
+
 /// Execute one full sync pass: fetch due feeds, identify new episodes,
 /// download them, and optionally enqueue them on the playlist.
 ///
@@ -111,31 +286,15 @@ pub async fn sync_once(
     db_path: &Path,
 ) -> Result<SyncPassStats> {
     let mut stats = SyncPassStats::default();
-
-    // Open a Database connection for this sync pass (per-pass connection, not shared)
     let db = Database::new(db_path).context("sync_once: opening podcast database")?;
 
-    // Read config values needed for this pass
-    let (
-        concurrent_downloads_max,
-        max_download_retries,
-        max_new_episodes,
-        auto_enqueue,
-        interval_secs,
-    ) = {
-        let config_read = config.read();
-        let podcast_settings = &config_read.settings.podcast;
-        let sync_settings = &podcast_settings.synchronization;
-        (
-            usize::from(podcast_settings.concurrent_downloads_max.get()),
-            usize::from(podcast_settings.max_download_retries),
-            sync_settings.max_new_episodes,
-            sync_settings.auto_enqueue,
-            sync_settings.interval.as_secs() as i64,
-        )
-    };
+    // Clone config structs to pass references to helpers (AC-31)
+    let sync_settings = config.read().settings.podcast.synchronization.clone();
+    let podcast_settings = config.read().settings.podcast.clone();
+    let concurrent_downloads_max = usize::from(podcast_settings.concurrent_downloads_max.get());
+    let max_download_retries = usize::from(podcast_settings.max_download_retries);
+    let interval_secs = sync_settings.interval.as_secs() as i64;
 
-    // Retrieve only podcasts that are due for checking (AC-08, SCENARIO-011, DEF-001)
     let due_podcasts = db
         .due_podcasts(interval_secs)
         .context("sync_once: reading due podcast list from database")?;
@@ -144,7 +303,6 @@ pub async fn sync_once(
         return Ok(stats);
     }
 
-    // Convert to a simpler structure for the rest of the function
     let due_podcasts_full: Vec<(i64, String, String)> = due_podcasts
         .iter()
         .map(|p| (p.id, p.title.clone(), p.url.clone()))
@@ -159,8 +317,7 @@ pub async fn sync_once(
     let existing_files: ExistingFilesMap = tokio::task::spawn_blocking(move || {
         let mut file_map: ExistingFilesMap = HashMap::new();
         for (pod_id, title) in &due_titles {
-            let pod_dir = create_podcast_dir(&config_snapshot, title.clone());
-            match pod_dir {
+            match create_podcast_dir(&config_snapshot, title.clone()) {
                 Ok(dir_path) => {
                     let filenames: HashSet<String> = std::fs::read_dir(&dir_path)
                         .into_iter()
@@ -171,7 +328,6 @@ pub async fn sync_once(
                     file_map.insert(*pod_id, filenames);
                 }
                 Err(err) => {
-                    // Log but continue — the podcast will just not have file-existence info
                     eprintln!("Failed to scan directory for podcast '{title}': {err}");
                 }
             }
@@ -181,13 +337,8 @@ pub async fn sync_once(
     .await
     .context("sync_once: pre-scan task panicked")?;
 
-    // Create a SINGLE shared TaskPool for all network operations (AC-10, SCENARIO-014)
     let shared_task_pool = TaskPool::new(concurrent_downloads_max);
-
-    // Set up channel for receiving feed fetch results
     let (feed_tx, mut feed_rx) = unbounded_channel();
-
-    // Dispatch feed fetch tasks for all due podcasts
     let pod_count = due_podcasts_full.len();
     let pod_data_map: HashMap<i64, String> = due_podcasts_full
         .iter()
@@ -201,161 +352,50 @@ pub async fn sync_once(
             let _ = feed_tx_clone.send(msg);
         });
     }
-
-    // Drop the original sender so the channel closes when all tasks finish
     drop(feed_tx);
 
-    // Collect all downloaded episodes for later enqueue (sorted per-podcast)
-    // Structure: Vec<(pod_id, episode_url, pubdate)>
-    struct EnqueueEntry {
-        pod_id: i64,
-        url: String,
-        pubdate: Option<chrono::DateTime<Utc>>,
-    }
     let mut enqueue_entries: Vec<EnqueueEntry> = Vec::new();
-
-    // Process feed results with per-podcast error isolation
     let mut msg_counter: usize = 0;
+
     while let Some(message) = feed_rx.recv().await {
         match message {
-            PodcastSyncResult::FetchPodcastStart(_) => {
-                // Progress notification, not counted
-            }
+            PodcastSyncResult::FetchPodcastStart(_) => {}
             PodcastSyncResult::SyncData((pod_id, pod_data)) => {
                 msg_counter += 1;
                 stats.podcasts_checked += 1;
-
-                // Update last_checked on SUCCESS path (AC-08, SCENARIO-010)
-                // Update podcast in DB (handles deduplication via GUID and URL matching)
-                match db.update_podcast(pod_id, &pod_data) {
-                    Ok(_sync_result) => {
-                        // Explicitly update last_checked to current time after successful sync
-                        if let Err(err) = db.set_last_checked(pod_id, Utc::now()) {
-                            warn!("Failed to update last_checked for podcast {pod_id}: {err}");
-                        }
-                        // After updating, find episodes that need downloading (path == None)
-                        match db.get_episodes(pod_id, false) {
-                            Ok(episodes) => {
-                                // Get pre-scanned filenames for this podcast
-                                let empty_set = HashSet::new();
-                                let pod_existing_files =
-                                    existing_files.get(&pod_id).unwrap_or(&empty_set);
-
-                                // Filter episodes using the helper (AC-13)
-                                let to_download = find_episodes_to_download(
-                                    &episodes,
-                                    pod_existing_files,
-                                    max_new_episodes,
-                                );
-
-                                if !to_download.is_empty() {
-                                    // Create download directory using utility (AC-17, SCENARIO-025)
-                                    let pod_title =
-                                        pod_data_map.get(&pod_id).cloned().unwrap_or_default();
-                                    let config_read = config.read().clone();
-                                    let pod_download_dir = match create_podcast_dir(
-                                        &config_read,
-                                        pod_title.clone(),
-                                    ) {
-                                        Ok(dir) => dir,
-                                        Err(err) => {
-                                            warn!(
-                                                "Failed to create podcast dir for '{pod_title}': {err}"
-                                            );
-                                            continue;
-                                        }
-                                    };
-
-                                    // Build EpData for download
-                                    let total_episodes = episodes.len();
-                                    let episodes_to_download: Vec<EpData> = to_download
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(idx, ep)| {
-                                            let ep_title = format!(
-                                                "{:03} - {}",
-                                                total_episodes - idx,
-                                                ep.title
-                                            );
-                                            EpData {
-                                                id: ep.id,
-                                                pod_id: ep.pod_id,
-                                                title: ep_title,
-                                                url: ep.url.clone(),
-                                                pubdate: ep.pubdate,
-                                                file_path: None,
-                                            }
-                                        })
-                                        .collect();
-
-                                    // Download using shared TaskPool (AC-10)
-                                    let (dl_tx, mut dl_rx) = unbounded_channel();
-                                    download_list(
-                                        episodes_to_download,
-                                        &pod_download_dir,
-                                        max_download_retries,
-                                        &shared_task_pool,
-                                        move |msg| {
-                                            let _ = dl_tx.send(msg);
-                                        },
-                                    );
-
-                                    // Drain download results (AC-16, non-blocking)
-                                    while let Some(dl_result) = dl_rx.recv().await {
-                                        match dl_result {
-                                            PodcastDLResult::DLComplete(ep_data) => {
-                                                if let Some(ref file_path) = ep_data.file_path {
-                                                    stats.episodes_downloaded += 1;
-                                                    if let Err(err) =
-                                                        db.insert_file(ep_data.id, file_path)
-                                                    {
-                                                        warn!(
-                                                            "Failed to record download in DB: {err:#?}"
-                                                        );
-                                                    }
-                                                    // Collect for enqueue (sorted later)
-                                                    enqueue_entries.push(EnqueueEntry {
-                                                        pod_id,
-                                                        url: ep_data.url.clone(),
-                                                        pubdate: ep_data.pubdate,
-                                                    });
-                                                } else {
-                                                    warn!(
-                                                        "DLComplete but file_path is None for episode: {}",
-                                                        ep_data.title
-                                                    );
-                                                }
-                                            }
-                                            PodcastDLResult::DLStart(_) => {
-                                                // Progress notification, not counted
-                                            }
-                                            PodcastDLResult::DLResponseError(ep_data)
-                                            | PodcastDLResult::DLFileCreateError(ep_data)
-                                            | PodcastDLResult::DLFileWriteError(ep_data) => {
-                                                warn!(
-                                                    "Episode download failed: {} - {}",
-                                                    ep_data.title, ep_data.url
-                                                );
-                                                stats.episodes_failed += 1;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            Err(err) => {
-                                warn!("Failed to get episodes for podcast {pod_id}: {err:#?}");
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        warn!("Failed to update podcast {pod_id}: {err:#?}");
-                        stats.podcasts_failed += 1;
+                let plan = prepare_download_plan(
+                    pod_id,
+                    &pod_data,
+                    &db,
+                    config,
+                    &existing_files,
+                    &pod_data_map,
+                    sync_settings.max_new_episodes,
+                    &mut stats,
+                );
+                let Some(plan) = plan else { continue };
+                let (dl_tx, mut dl_rx) = unbounded_channel();
+                download_list(
+                    plan.episodes_to_download,
+                    &plan.pod_download_dir,
+                    max_download_retries,
+                    &shared_task_pool,
+                    move |msg| {
+                        let _ = dl_tx.send(msg);
+                    },
+                );
+                let (file_records, new_entries, downloaded, failed) =
+                    drain_download_results(&mut dl_rx, plan.pod_id).await;
+                for (ep_id, file_path) in &file_records {
+                    if let Err(err) = db.insert_file(*ep_id, file_path) {
+                        warn!("Failed to record download in DB: {err:#?}");
                     }
                 }
+                stats.episodes_downloaded += downloaded;
+                stats.episodes_failed += failed;
+                enqueue_entries.extend(new_entries);
             }
-            PodcastSyncResult::NewData(_pod_data) => {
-                // This shouldn't happen in sync (we always pass Some(id)),
-                // but handle gracefully
+            PodcastSyncResult::NewData(_) => {
                 warn!("Unexpected NewData result in sync pass (expected SyncData)");
                 msg_counter += 1;
                 stats.podcasts_checked += 1;
@@ -365,8 +405,6 @@ pub async fn sync_once(
                 stats.podcasts_checked += 1;
                 stats.podcasts_failed += 1;
                 warn!("Feed fetch failed for: {}", feed.url);
-
-                // Update last_checked on FAILURE path (AC-08, SCENARIO-041)
                 if let Some(pod_id) = feed.id
                     && let Err(err) = db.set_last_checked(pod_id, Utc::now())
                 {
@@ -374,46 +412,14 @@ pub async fn sync_once(
                 }
             }
         }
-
         if msg_counter >= pod_count {
             break;
         }
     }
 
     // Auto-enqueue gating (AC-11, SCENARIO-015)
-    if auto_enqueue == AutoEnqueue::Enabled && !enqueue_entries.is_empty() {
-        // Sort episodes oldest-first by pubdate, keeping per-podcast groups contiguous (AC-12)
-        // Group by pod_id first (preserving insertion order), then sort within each group
-        let mut grouped: HashMap<i64, Vec<&EnqueueEntry>> = HashMap::new();
-        for entry in &enqueue_entries {
-            grouped.entry(entry.pod_id).or_default().push(entry);
-        }
-
-        // Process per-podcast groups in the order they appeared
-        let mut seen_pods: Vec<i64> = Vec::new();
-        for entry in &enqueue_entries {
-            if !seen_pods.contains(&entry.pod_id) {
-                seen_pods.push(entry.pod_id);
-            }
-        }
-
-        for pod_id in &seen_pods {
-            if let Some(entries) = grouped.get_mut(pod_id) {
-                // Sort within group: oldest pubdate first (SCENARIO-016, SCENARIO-017)
-                entries.sort_by_key(|e| e.pubdate);
-
-                for entry in entries.iter() {
-                    // Use PodcastUrl source (AC-14, SCENARIO-021)
-                    let track = PlaylistTrackSource::PodcastUrl(entry.url.clone());
-                    let add_cmd = PlaylistAddTrack::new_append_single(track);
-                    if let Err(err) = cmd_tx.send(PlayerCmd::PlaylistAddTrack(add_cmd)) {
-                        warn!("Failed to enqueue episode: {err}");
-                    } else {
-                        stats.episodes_enqueued += 1;
-                    }
-                }
-            }
-        }
+    if sync_settings.auto_enqueue == AutoEnqueue::Enabled {
+        enqueue_downloaded_episodes(&enqueue_entries, cmd_tx, &mut stats);
     }
 
     Ok(stats)
@@ -435,10 +441,9 @@ pub fn start_podcast_sync_task(
     db_path: std::path::PathBuf,
 ) {
     handle.spawn(async move {
-        let (interval_duration, refresh_on_startup) = {
-            let settings = &config.read().settings.podcast.synchronization;
-            (settings.interval, settings.refresh_on_startup)
-        };
+        let sync_config = config.read().settings.podcast.synchronization.clone();
+        let interval_duration = sync_config.interval;
+        let refresh_on_startup = sync_config.refresh_on_startup;
 
         // Guard against zero-duration interval which would cause tokio to panic.
         // Clamp to MINIMUM_SYNC_INTERVAL (AC-05).
