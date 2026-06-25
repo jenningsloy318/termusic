@@ -14,7 +14,7 @@ pub struct PodcastDB {
     pub description: Option<String>,
     pub author: Option<String>,
     pub explicit: Option<bool>,
-    pub last_checked: DateTime<Utc>,
+    pub last_checked: Option<DateTime<Utc>>,
     pub image_url: Option<String>,
 }
 
@@ -22,8 +22,7 @@ impl PodcastDB {
     /// Try to convert a given row to a [`PodcastDB`] instance, using column names to resolve the values
     pub fn try_from_row_named(row: &Row<'_>) -> Result<Self, rusqlite::Error> {
         // NOTE: all the names in "get" below are the *column names* as defined in migrations/001.sql#table_podcasts (pseudo link)
-        let last_checked =
-            convert_date(&row.get("last_checked")).ok_or(rusqlite::Error::InvalidQuery)?;
+        let last_checked = convert_date(&row.get("last_checked"));
         Ok(PodcastDB {
             id: row.get("id")?,
             title: row.get("title")?,
@@ -120,4 +119,32 @@ pub fn delete_podcast(id: PodcastDBId, con: &Connection) -> Result<usize, rusqli
     // those episodes as well.
     let mut stmt = con.prepare_cached("DELETE FROM podcasts WHERE id = ?;")?;
     stmt.execute(params![id])
+}
+
+/// Update only the `last_checked` timestamp for a podcast.
+/// Used on both success and failure paths during sync to record
+/// when the feed was last attempted, enabling per-podcast scheduling.
+pub fn update_last_checked(
+    id: PodcastDBId,
+    timestamp: DateTime<Utc>,
+    con: &Connection,
+) -> Result<usize, rusqlite::Error> {
+    let mut stmt = con.prepare_cached("UPDATE podcasts SET last_checked = ? WHERE id = ?;")?;
+    stmt.execute(params![timestamp.timestamp(), id])
+}
+
+/// Retrieve podcasts that are due for a feed check.
+/// A podcast is due when (now - `last_checked`) >= `effective_interval`,
+/// where `effective_interval` = `check_interval` (per-podcast) or `global_interval_secs` (fallback).
+/// Podcasts with NULL `last_checked` are always considered due.
+pub fn get_due_podcasts(
+    global_interval_secs: i64,
+    con: &Connection,
+) -> Result<Vec<PodcastDB>, rusqlite::Error> {
+    let mut stmt = con.prepare_cached(
+        "SELECT * FROM podcasts WHERE last_checked IS NULL \
+         OR (strftime('%s', 'now') - last_checked) >= COALESCE(check_interval, ?)",
+    )?;
+    stmt.query_map(params![global_interval_secs], PodcastDB::try_from_row_named)?
+        .collect()
 }

@@ -1,6 +1,7 @@
 use termusiclib::player::playlist_helpers::{
     PlaylistAddTrack, PlaylistPlaySpecific, PlaylistRemoveTrackIndexed, PlaylistSwapTrack,
 };
+use termusiclib::player::PodcastDownloadRequest;
 
 #[allow(clippy::doc_link_with_quotes)]
 /// Enum for Commands to send to the [`MusicPlayerClient` "Actor"](crate::ui::music_player_client).
@@ -26,6 +27,13 @@ pub enum TuiCmd {
 
     Playlist(PlaylistCmd),
     QuitServer,
+
+    /// Trigger server-side refresh of all podcast feeds.
+    PodcastRefreshFeeds,
+    /// Request server to download specific podcast episodes.
+    PodcastDownloadEpisodes(PodcastDownloadRequest),
+    /// Add a new podcast by feed URL.
+    PodcastAddFeed(String),
 }
 
 /// Enum for Commands to send specificly for Playlist

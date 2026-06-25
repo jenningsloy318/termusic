@@ -207,4 +207,25 @@ impl Playback {
 
         Ok(())
     }
+
+    pub async fn podcast_refresh_feeds(&mut self) -> Result<()> {
+        let request = tonic::Request::new(Empty {});
+        self.client.podcast_refresh_feeds(request).await?;
+        Ok(())
+    }
+
+    pub async fn podcast_download_episodes(
+        &mut self,
+        request: termusiclib::player::PodcastDownloadRequest,
+    ) -> Result<()> {
+        let request = tonic::Request::new(request);
+        self.client.podcast_download_episodes(request).await?;
+        Ok(())
+    }
+
+    pub async fn podcast_add_feed(&mut self, url: String) -> Result<()> {
+        let request = tonic::Request::new(termusiclib::player::PodcastAddFeedRequest { url });
+        self.client.podcast_add_feed(request).await?;
+        Ok(())
+    }
 }

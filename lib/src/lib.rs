@@ -31,6 +31,9 @@ extern crate log;
 mod player_playlist_add_track_tests;
 
 #[cfg(test)]
+mod player_phase2_tests;
+
+#[cfg(test)]
 mod tests {
     use std::{ffi::OsStr, path::PathBuf};
 

@@ -346,4 +346,40 @@ impl MusicPlayer for MusicPlayerService {
 
         Ok(Response::new(reply))
     }
+
+    async fn podcast_refresh_feeds(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<Empty>, Status> {
+        self.command(PlayerCmd::PodcastFeedRefresh);
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn podcast_download_episodes(
+        &self,
+        request: Request<player::PodcastDownloadRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let proto_req = request.into_inner();
+        let episodes: Vec<termusicplayback::EpisodeDownloadRequest> = proto_req
+            .episodes
+            .into_iter()
+            .map(|ep| termusicplayback::EpisodeDownloadRequest {
+                podcast_id: ep.podcast_id,
+                episode_title: ep.episode_title,
+                episode_url: ep.episode_url,
+            })
+            .collect();
+
+        self.command(PlayerCmd::PodcastDownloadEpisodes(episodes));
+        Ok(Response::new(Empty {}))
+    }
+
+    async fn podcast_add_feed(
+        &self,
+        request: Request<player::PodcastAddFeedRequest>,
+    ) -> Result<Response<Empty>, Status> {
+        let url = request.into_inner().url;
+        self.command(PlayerCmd::PodcastAddFeed(url));
+        Ok(Response::new(Empty {}))
+    }
 }

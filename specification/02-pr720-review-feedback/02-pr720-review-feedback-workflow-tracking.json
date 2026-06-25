@@ -1,0 +1,46 @@
+{
+  "$schema": "Super Dev Workflow Tracking",
+  "featureName": "PR #720 Review Feedback",
+  "specDirectory": "specification/02-pr720-review-feedback",
+  "worktreePath": "/home/jenningsl/development/osc/terminals/termusic/.worktree/02-pr720-review-feedback",
+  "startedAt": null,
+  "stages": [
+    { "id": 1, "name": "spec-setup", "status": "complete", "startedAt": null, "completedAt": "2026-06-25T05:18:34Z", "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 2, "name": "requirements-bdd", "status": "complete", "startedAt": "2026-06-25T05:18:45Z", "completedAt": "2026-06-25T05:25:38Z", "docs": ["01-requirements.md","02-bdd-scenarios.md"], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 3, "name": "research", "status": "complete", "startedAt": "2026-06-25T05:25:38Z", "completedAt": "2026-06-25T06:02:35Z", "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 4, "name": "bug-analysis", "status": "skipped", "startedAt": null, "completedAt": "2026-06-25T06:02:35Z", "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 5, "name": "specification", "status": "complete", "startedAt": "2026-06-25T06:02:35Z", "completedAt": "2026-06-25T06:15:00Z", "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 6, "name": "design", "status": "complete", "startedAt": "2026-06-25T06:15:00Z", "completedAt": "2026-06-25T06:29:41Z", "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 7, "name": "implementation-plan", "status": "complete", "startedAt": "2026-06-25T06:29:41Z", "completedAt": "2026-06-25T06:45:00Z", "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 8, "name": "task-list", "status": "complete", "startedAt": "2026-06-25T06:45:00Z", "completedAt": "2026-06-25T06:50:00Z", "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 9, "name": "implementation", "status": "in_progress", "startedAt": "2026-06-25T07:00:00Z", "completedAt": null, "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 10, "name": "review", "status": "pending", "startedAt": null, "completedAt": null, "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 11, "name": "integration-test", "status": "pending", "startedAt": null, "completedAt": null, "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 12, "name": "finalize", "status": "pending", "startedAt": null, "completedAt": null, "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 13, "name": "commit", "status": "pending", "startedAt": null, "completedAt": null, "docs": [], "files": { "created": [], "modified": [], "deleted": [] } }
+  ],
+  "implementationPhases": [
+    {"phaseNumber": 1, "name": "Prerequisites and Migration", "status": "complete", "startedAt": "2026-06-25T07:00:00Z", "completedAt": "2026-06-25T07:50:28Z", "reviewIterations": 1, "files": {"created": ["/home/jenningsl/development/osc/terminals/termusic/.worktree/02-pr720-review-feedback/playback/tests/phase1_migration_tests.rs", "/home/jenningsl/development/osc/terminals/termusic/.worktree/02-pr720-review-feedback/server/tests/phase1_server_handler_tests.rs"], "modified": ["/home/jenningsl/development/osc/terminals/termusic/.worktree/02-pr720-review-feedback/playback/src/lib.rs", "/home/jenningsl/development/osc/terminals/termusic/.worktree/02-pr720-review-feedback/server/src/server.rs"], "deleted": []}},
+    {"phaseNumber": 2, "name": "Architecture and Config Redesign", "status": "complete", "startedAt": "2026-06-25T08:00:00Z", "completedAt": "2026-06-25T08:55:27Z", "reviewIterations": 1, "files": {"created": ["/home/jenningsl/development/osc/terminals/termusic/.worktree/02-pr720-review-feedback/lib/src/config/v2/server/phase2_config_tests.rs", "/home/jenningsl/development/osc/terminals/termusic/.worktree/02-pr720-review-feedback/lib/src/podcast/db/phase2_db_tests.rs", "/home/jenningsl/development/osc/terminals/termusic/.worktree/02-pr720-review-feedback/lib/src/player_phase2_tests.rs"], "modified": ["lib/src/config/v2/server/synchronization.rs", "lib/src/config/v2/server/mod.rs", "lib/src/config/v2/server/synchronization_tests.rs", "lib/src/podcast/db/migrations/002.sql", "lib/src/podcast/db/migration.rs", "lib/src/podcast/db/podcast_db.rs", "lib/src/podcast/db/mod.rs", "lib/proto/player.proto", "lib/src/player.rs", "server/src/podcast_sync.rs", "server/src/server.rs", "tui/src/ui/model/update.rs"], "deleted": []}},
+    {"phaseNumber": 3, "name": "Sync Logic Correctness", "status": "complete", "startedAt": "2026-06-25T09:00:00Z", "completedAt": "2026-06-25T10:52:06Z", "reviewIterations": 2, "files": {"created": ["/home/jenningsl/development/osc/terminals/termusic/.worktree/02-pr720-review-feedback/server/src/podcast_sync_phase3_tests.rs"], "modified": ["/home/jenningsl/development/osc/terminals/termusic/.worktree/02-pr720-review-feedback/server/src/podcast_sync.rs", "/home/jenningsl/development/osc/terminals/termusic/.worktree/02-pr720-review-feedback/server/src/podcast_sync_phase3_tests.rs", "/home/jenningsl/development/osc/terminals/termusic/.worktree/02-pr720-review-feedback/server/src/podcast_sync_scenario011_tests.rs"], "deleted": []}},
+    {"phaseNumber": 4, "name": "Test Quality", "status": "complete", "startedAt": "2026-06-25T10:52:06Z", "completedAt": "2026-06-25T11:21:46Z", "reviewIterations": 1, "files": {"created": ["/home/jenningsl/development/osc/terminals/termusic/.worktree/02-pr720-review-feedback/server/src/podcast_sync_phase4_tests.rs"], "modified": ["/home/jenningsl/development/osc/terminals/termusic/.worktree/02-pr720-review-feedback/server/src/podcast_sync.rs", "/home/jenningsl/development/osc/terminals/termusic/.worktree/02-pr720-review-feedback/lib/src/config/v2/server/synchronization_tests.rs"], "deleted": []}},
+    {"phaseNumber": 5, "name": "Style and Conventions", "status": "in_progress", "startedAt": "2026-06-25T11:22:09Z", "completedAt": null, "reviewIterations": 0}
+  ],
+  "tasks": [],
+  "iteration": {
+    "currentPhase": 5,
+    "totalPhases": 5,
+    "loops": 0,
+    "lastReviewVerdict": null
+  },
+  "team": {
+    "name": "super-dev-pr720-review-feedback",
+    "teammates": [],
+    "messages": []
+  },
+  "status": {
+    "allStagesComplete": false,
+    "allTasksComplete": false,
+    "workflowDone": false
+  }
+}

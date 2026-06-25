@@ -145,6 +145,26 @@ pub enum PlayerCmd {
     PlaylistSwapTrack(PlaylistSwapTrack),
     PlaylistShuffle,
     PlaylistRemoveDeletedTracks,
+
+    /// Request podcast feed refresh for all subscriptions (triggered from TUI).
+    PodcastFeedRefresh,
+    /// Request download of specific episodes (triggered from TUI).
+    PodcastDownloadEpisodes(Vec<EpisodeDownloadRequest>),
+    /// Request to add a new podcast by feed URL.
+    PodcastAddFeed(String),
+}
+
+/// Download request for a single podcast episode.
+/// Carries all information the server needs to download an episode
+/// without access to TUI state.
+#[derive(Debug, Clone)]
+pub struct EpisodeDownloadRequest {
+    /// The database ID of the podcast this episode belongs to.
+    pub podcast_id: i64,
+    /// The URL to download the episode from.
+    pub episode_url: String,
+    /// The title of the episode (used for filename construction).
+    pub episode_title: String,
 }
 
 /// Sources for [`PlayerCmd::Quit`].

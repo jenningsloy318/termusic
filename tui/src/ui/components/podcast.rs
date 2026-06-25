@@ -3,10 +3,9 @@ use std::time::Duration;
 use anyhow::{Result, anyhow, bail};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use reqwest::ClientBuilder;
-use sanitize_filename::{Options, sanitize_with_options};
 use serde_json::Value;
 use termusiclib::config::SharedTuiSettings;
-use termusiclib::podcast::{EpData, PodcastFeed, PodcastNoId, download_list};
+use termusiclib::podcast::{EpData, PodcastFeed, PodcastNoId};
 use tokio::runtime::Handle;
 use tui_realm_stdlib::components::List;
 use tui_realm_stdlib::prop_ext::CommonHighlight;
@@ -446,23 +445,9 @@ impl Model {
     }
 
     pub fn podcast_add(&mut self, url: String) {
-        let feed = PodcastFeed::new(None, url, None);
-        let tx_to_main = self.tx_to_main.clone();
-
-        crate::podcast::check_feed(
-            feed,
-            usize::from(
-                self.config_server
-                    .read()
-                    .settings
-                    .podcast
-                    .max_download_retries,
-            ),
-            &self.taskpool,
-            move |msg| {
-                let _ = tx_to_main.send(Msg::Podcast(PCMsg::SyncResult(msg)));
-            },
-        );
+        let _ = self
+            .cmd_to_server_tx
+            .send(crate::ui::tui_cmd::TuiCmd::PodcastAddFeed(url));
     }
     pub fn podcast_sync_feeds_and_episodes(&mut self) {
         let mut lines = Vec::new();
@@ -628,64 +613,11 @@ impl Model {
     }
 
     /// Synchronize RSS feed data for one or more podcasts.
-    pub fn podcast_refresh_feeds(&mut self, index: Option<usize>) -> Result<()> {
-        // We pull out the data we need here first, so we can
-        // stop borrowing the podcast list as quickly as possible.
-        // Slightly less efficient (two loops instead of
-        // one), but then it won't block other tasks that
-        // need to access the list.
-
-        let mut pod_data = Vec::new();
-        match index {
-            // just grab one podcast
-            Some(i) => {
-                if self.podcast.podcasts.is_empty() {
-                    return Ok(());
-                }
-                let pod_selected = self
-                    .podcast
-                    .podcasts
-                    .get(i)
-                    .ok_or_else(|| anyhow!("get podcast selected failed."))?;
-                let pcf = PodcastFeed::new(
-                    Some(pod_selected.id),
-                    pod_selected.url.clone(),
-                    Some(pod_selected.title.clone()),
-                );
-                pod_data.push(pcf);
-            }
-
-            // get all of 'em!
-            None => {
-                pod_data = self
-                    .podcast
-                    .podcasts
-                    .iter()
-                    .map(|pod| {
-                        PodcastFeed::new(Some(pod.id), pod.url.clone(), Some(pod.title.clone()))
-                    })
-                    .collect();
-            }
-        }
-        for feed in pod_data {
-            let tx_to_main = self.tx_to_main.clone();
-
-            crate::podcast::check_feed(
-                feed,
-                usize::from(
-                    self.config_server
-                        .read()
-                        .settings
-                        .podcast
-                        .max_download_retries,
-                ),
-                &self.taskpool,
-                move |msg| {
-                    let _ = tx_to_main.send(Msg::Podcast(PCMsg::SyncResult(msg)));
-                },
-            );
-        }
-        // self.update_tracker_notif();
+    pub fn podcast_refresh_feeds(&mut self, _index: Option<usize>) -> Result<()> {
+        // Delegate all feed refresh operations to the server (AC-01, AC-02)
+        let _ = self
+            .cmd_to_server_tx
+            .send(crate::ui::tui_cmd::TuiCmd::PodcastRefreshFeeds);
         self.podcast_sync_feeds_and_episodes();
         Ok(())
     }
@@ -756,39 +688,23 @@ impl Model {
         // ep_data.retain(|ep| !self.download_tracker.contains(&ep.id));
 
         if !ep_data.is_empty() {
-            // add directory for podcast, create if it does not exist
-            let dir_name = sanitize_with_options(
-                &pod_title,
-                Options {
-                    truncate: true,
-                    windows: true, // for simplicity, we'll just use Windows-friendly paths for everyone
-                    replacement: "",
-                },
-            );
-            match crate::utils::create_podcast_dir(&self.config_server.read(), dir_name) {
-                Ok(path) => {
-                    let tx_to_main = self.tx_to_main.clone();
-                    // for ep in ep_data.iter() {
-                    //     self.download_tracker.insert(ep.id);
-                    // }
-                    download_list(
-                        ep_data,
-                        &path,
-                        usize::from(
-                            self.config_server
-                                .read()
-                                .settings
-                                .podcast
-                                .max_download_retries,
-                        ),
-                        &self.taskpool,
-                        move |msg| {
-                            let _ = tx_to_main.send(Msg::Podcast(PCMsg::DLResult(msg)));
-                        },
-                    );
-                }
-                Err(_) => bail!("Could not create dir: {pod_title}"),
-            }
+            use termusiclib::player::{PodcastDownloadRequest, PodcastEpisodeToDownload};
+
+            let episodes: Vec<PodcastEpisodeToDownload> = ep_data
+                .iter()
+                .map(|ep| PodcastEpisodeToDownload {
+                    podcast_id: ep.pod_id,
+                    podcast_title: pod_title.clone(),
+                    episode_id: ep.id,
+                    episode_title: ep.title.clone(),
+                    episode_url: ep.url.clone(),
+                })
+                .collect();
+
+            let request = PodcastDownloadRequest { episodes };
+            let _ = self
+                .cmd_to_server_tx
+                .send(crate::ui::tui_cmd::TuiCmd::PodcastDownloadEpisodes(request));
         }
 
         // self.podcast_sync_feeds_and_episodes();

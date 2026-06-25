@@ -1211,6 +1211,9 @@ impl Model {
                     self.mount_error_popup(err);
                 }
             }
+            UpdateEvents::PodcastSync(_) => {
+                // Podcast sync events are informational; TUI display will be added later.
+            }
         }
     }
 

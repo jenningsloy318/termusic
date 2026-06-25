@@ -4,7 +4,7 @@ use rusqlite::{Connection, params};
 use semver::Version;
 
 /// The Current Database schema version this application is meant to run against
-pub(super) const DB_VERSION: u32 = 1;
+pub(super) const DB_VERSION: u32 = 2;
 
 /// Helper function to get the `user_version` with a single function call
 #[inline]
@@ -57,6 +57,13 @@ fn apply_migrations(conn: &Connection, mut user_version: u32) -> Result<()> {
         conn.execute_batch(include_str!("./migrations/001.sql"))
             .context("PodcastDatabase version 1 could not be created")?;
         user_version = set_user_version(conn, 1)?;
+    }
+
+    if user_version == 1 {
+        // Version 2: Add per-podcast sync scheduling support (check_interval column)
+        conn.execute_batch(include_str!("./migrations/002.sql"))
+            .context("PodcastDatabase version 2 migration failed")?;
+        user_version = set_user_version(conn, 2)?;
     }
 
     Ok(())
@@ -130,7 +137,7 @@ mod tests {
 
         assert_eq!(0, get_user_version(&conn).unwrap());
         migrate(&conn).unwrap();
-        assert_eq!(1, get_user_version(&conn).unwrap());
+        assert_eq!(2, get_user_version(&conn).unwrap());
 
         let all_tracks: Vec<String> = {
             let mut prep = conn.prepare("SELECT name FROM sqlite_schema WHERE type ='table' AND name NOT LIKE 'sqlite_%';").unwrap();

@@ -13,6 +13,8 @@ use super::{Episode, EpisodeNoId, Podcast, PodcastNoId, RE_ARTICLES};
 use crate::track::Track;
 use podcast_db::{PodcastDB, PodcastDBInsertable};
 
+pub use podcast_db::{get_due_podcasts, update_last_checked};
+
 mod episode_db;
 mod file_db;
 mod migration;
@@ -277,6 +279,15 @@ impl Database {
         Ok(())
     }
 
+    /// Get the title of a podcast by its database ID.
+    pub fn get_podcast_title(&self, podcast_id: PodcastDBId) -> Result<String> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT title FROM podcasts WHERE id = ?;")?;
+        let title = stmt.query_row(params![podcast_id], |row| row.get(0))?;
+        Ok(title)
+    }
+
     /// Generates list of all podcasts in database.
     /// TODO: This should probably use a JOIN statement instead.
     pub fn get_podcasts(&self) -> Result<Vec<Podcast>> {
@@ -301,7 +312,7 @@ impl Database {
                     description: podcast.description,
                     author: podcast.author,
                     explicit: podcast.explicit,
-                    last_checked: podcast.last_checked,
+                    last_checked: podcast.last_checked.unwrap_or_default(),
                     episodes,
                     image_url: podcast.image_url,
                 })
@@ -435,6 +446,25 @@ impl Database {
 
         Ok(())
     }
+
+    /// Retrieve podcasts that are due for a feed check, using the internal connection.
+    /// Wraps the standalone `get_due_podcasts` function.
+    pub fn due_podcasts(
+        &self,
+        global_interval_secs: i64,
+    ) -> Result<Vec<podcast_db::PodcastDB>, rusqlite::Error> {
+        get_due_podcasts(global_interval_secs, &self.conn)
+    }
+
+    /// Update only the `last_checked` timestamp for a podcast, using the internal connection.
+    /// Wraps the standalone `update_last_checked` function.
+    pub fn set_last_checked(
+        &self,
+        id: PodcastDBId,
+        timestamp: DateTime<Utc>,
+    ) -> Result<usize, rusqlite::Error> {
+        update_last_checked(id, timestamp, &self.conn)
+    }
 }
 
 /// Helper function converting an (optional) Unix timestamp to a
@@ -455,3 +485,6 @@ mod test_utils {
         Connection::open_in_memory().expect("open db failed")
     }
 }
+
+#[cfg(test)]
+mod phase2_db_tests;

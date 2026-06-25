@@ -41,6 +41,14 @@ service MusicPlayer {
   rpc ReloadConfig(Empty) returns (Empty);
   rpc SubscribeServerUpdates(Empty) returns (stream StreamUpdates);
   rpc QuitServer(Empty) returns (Empty);
+
+  // Podcast Commands
+  // Refresh all subscribed podcast feeds (server performs the network calls)
+  rpc PodcastRefreshFeeds(Empty) returns (Empty);
+  // Download specific podcast episodes (server performs the downloads)
+  rpc PodcastDownloadEpisodes(PodcastDownloadRequest) returns (Empty);
+  // Add a new podcast by feed URL
+  rpc PodcastAddFeed(PodcastAddFeedRequest) returns (Empty);
 }
 
 message Empty {}
@@ -101,7 +109,40 @@ message StreamUpdates {
     UpdateGaplessChanged gapless_changed = 6;
     UpdatePlaylist playlist_changed = 7;
     UpdateProgress progress_changed = 8;
+    UpdatePodcastSync podcast_sync = 9;
   }
+}
+
+// Podcast sync progress reporting from server to client
+message UpdatePodcastSync {
+  oneof type {
+    PodcastSyncStarted started = 1;
+    PodcastSyncProgress progress = 2;
+    PodcastSyncComplete complete = 3;
+    PodcastSyncError error = 4;
+  }
+}
+
+message PodcastSyncStarted {
+  uint64 total_podcasts = 1;
+}
+
+message PodcastSyncProgress {
+  string podcast_title = 1;
+  uint64 episodes_found = 2;
+  uint64 episodes_downloaded = 3;
+}
+
+message PodcastSyncComplete {
+  uint64 podcasts_checked = 1;
+  uint64 podcasts_failed = 2;
+  uint64 episodes_downloaded = 3;
+  uint64 episodes_enqueued = 4;
+}
+
+message PodcastSyncError {
+  string podcast_title = 1;
+  string error_message = 2;
 }
 
 // Indicate that some events could not be send
@@ -282,4 +323,23 @@ message TrackId {
     // A podcast episode
     string podcastUrl = 3;
   }
+}
+
+// Request to download specific podcast episodes
+message PodcastDownloadRequest {
+  repeated PodcastEpisodeToDownload episodes = 1;
+}
+
+// A single episode to download
+message PodcastEpisodeToDownload {
+  int64 podcast_id = 1;
+  string podcast_title = 2;
+  int64 episode_id = 3;
+  string episode_title = 4;
+  string episode_url = 5;
+}
+
+// Request to add a new podcast by URL
+message PodcastAddFeedRequest {
+  string url = 1;
 }
