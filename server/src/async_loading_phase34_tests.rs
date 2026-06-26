@@ -32,7 +32,7 @@ mod async_loading_phase34_tests {
     use std::time::{Duration, Instant};
 
     use parking_lot::RwLock;
-    use termusiclib::config::{SharedServerSettings, new_shared_server_settings, ServerOverlay};
+    use termusiclib::config::{ServerOverlay, SharedServerSettings, new_shared_server_settings};
     use termusiclib::player::{UpdateEvents, UpdatePlaylistEvents};
     use termusiclib::track::Track;
     use termusicplayback::{PlayerCmd, PlayerCmdSender, Playlist, SharedPlaylist, StreamTX};
@@ -370,7 +370,10 @@ mod async_loading_phase34_tests {
                 let pl = playlist.clone();
                 let flag = playlist_is_loading.clone();
                 tokio::spawn(async move {
-                    assert!(flag.load(Ordering::Acquire), "Loading should be in progress");
+                    assert!(
+                        flag.load(Ordering::Acquire),
+                        "Loading should be in progress"
+                    );
                     let read = pl.read();
                     let count = read.len();
                     drop(read);
@@ -393,7 +396,10 @@ mod async_loading_phase34_tests {
 
         // All should see empty playlist
         for (i, count) in results.iter().enumerate() {
-            assert_eq!(*count, 0, "Client {i} must see empty playlist during loading");
+            assert_eq!(
+                *count, 0,
+                "Client {i} must see empty playlist during loading"
+            );
         }
     }
 
@@ -843,9 +849,7 @@ mod async_loading_phase34_tests {
         assert!(
             matches!(
                 event,
-                UpdateEvents::PlaylistChanged(
-                    UpdatePlaylistEvents::PlaylistShuffled(_)
-                )
+                UpdateEvents::PlaylistChanged(UpdatePlaylistEvents::PlaylistShuffled(_))
             ),
             "Reconnected client must receive PlaylistShuffled event, got: {:?}",
             event
@@ -926,9 +930,7 @@ mod async_loading_phase34_tests {
         assert!(
             matches!(
                 event,
-                UpdateEvents::PlaylistChanged(
-                    UpdatePlaylistEvents::PlaylistShuffled(_)
-                )
+                UpdateEvents::PlaylistChanged(UpdatePlaylistEvents::PlaylistShuffled(_))
             ),
             "Stream event must be PlaylistChanged(PlaylistShuffled), got: {:?}",
             event

@@ -12,14 +12,13 @@ use termusiclib::config::v2::server::config_extra::ServerConfigVersionedDefaulte
 use termusiclib::config::v2::server::{ComProtocol, ScanDepth, StartupState};
 use termusiclib::config::{ServerOverlay, SharedServerSettings, new_shared_server_settings};
 use termusiclib::player::music_player_server::MusicPlayerServer;
-use termusiclib::player::{
-    GetProgressResponse, PlayerProgress, PlayerTime, RunningStatus,
-};
+use termusiclib::player::{GetProgressResponse, PlayerProgress, PlayerTime, RunningStatus};
 use termusiclib::track::{MediaTypesSimple, Track};
 use termusiclib::{podcast, utils};
 use termusicplayback::{
     Backend, BackendSelect, GeneralPlayer, PlayerCmd, PlayerCmdReciever, PlayerCmdSender,
-    PlayerErrorType, PlayerTrait, Playlist, RunInfo, SharedPlaylist, SharedRunInfo, SpeedSigned, VolumeSigned, quit_sources,
+    PlayerErrorType, PlayerTrait, Playlist, RunInfo, SharedPlaylist, SharedRunInfo, SpeedSigned,
+    VolumeSigned, quit_sources,
 };
 use tokio::runtime::Handle;
 use tokio::select;
@@ -31,6 +30,12 @@ use tonic::transport::Server;
 
 use crate::connection::{ActiveConnectionData, ActiveConnections, tcp_stream};
 
+#[cfg(test)]
+mod async_loading_phase1_tests;
+#[cfg(test)]
+mod async_loading_phase2_tests;
+#[cfg(test)]
+mod async_loading_phase34_tests;
 mod cli;
 mod connection;
 mod logger;
@@ -44,10 +49,6 @@ mod podcast_sync_phase4_tests;
 mod podcast_sync_phase5_tests;
 #[cfg(test)]
 mod podcast_sync_scenario011_tests;
-#[cfg(test)]
-mod async_loading_phase1_tests;
-#[cfg(test)]
-mod async_loading_phase34_tests;
 
 #[macro_use]
 extern crate log;
@@ -188,7 +189,15 @@ async fn actual_main() -> Result<()> {
 
     let cancel_token = service_cancel_token.clone();
     let playlist_c = playlist.clone();
-    start_playlist_save_interval(tokio_handle.clone(), cancel_token, playlist_c);
+    // PlaylistLoadingFlag set to false: background loading is not yet wired into
+    // the startup sequence (Phase 3). Once integrated, this will be the real flag.
+    let playlist_is_loading: PlaylistLoadingFlag = Arc::new(AtomicBool::new(false));
+    start_playlist_save_interval(
+        tokio_handle.clone(),
+        cancel_token,
+        playlist_c,
+        playlist_is_loading,
+    );
 
     // Spawn the periodic podcast sync task if enabled (AC-02, AC-11, SCENARIO-005, SCENARIO-020)
     if config.read().settings.podcast.synchronization.interval > std::time::Duration::ZERO {
@@ -246,10 +255,15 @@ async fn actual_main() -> Result<()> {
 const PLAYLIST_SAVE_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Spawn a task to periodically save the playlist to disk, if modified.
-fn start_playlist_save_interval(
+///
+/// When `playlist_is_loading` is `true`, saves are skipped to prevent overwriting
+/// the on-disk `playlist.log` with empty/stale data while background loading is
+/// in progress (AC-07, SCENARIO-015, SCENARIO-016, SCENARIO-017).
+pub fn start_playlist_save_interval(
     handle: Handle,
     cancel_token: CancellationToken,
     playlist: SharedPlaylist,
+    playlist_is_loading: PlaylistLoadingFlag,
 ) {
     handle.spawn(async move {
         let mut timer = tokio::time::interval_at(
@@ -259,6 +273,11 @@ fn start_playlist_save_interval(
         loop {
             select! {
                 _ = timer.tick() => {
+                    // Skip save if background loading is still in progress (AC-07)
+                    if playlist_is_loading.load(std::sync::atomic::Ordering::Acquire) {
+                        debug!("Skipping playlist save: background loading in progress");
+                        continue;
+                    }
                     match playlist.write().save_if_modified() {
                         Err(err) => warn!("Error saving playlist in interval: {err:#?}"),
                         Ok(true) => debug!("Saved playlist in interval"),
@@ -569,17 +588,11 @@ fn player_loop(
                 info!("PlayerCmd::PodcastFeedRefresh received — manual feed refresh");
                 let config = player.config.clone();
                 let cmd_tx = player.cmd_tx.clone();
-                let db_path = utils::get_app_config_path()
-                    .unwrap_or_else(|_| PathBuf::from("."));
+                let db_path = utils::get_app_config_path().unwrap_or_else(|_| PathBuf::from("."));
                 // Spawn async sync with interval=0 to refresh ALL podcasts
                 tokio::spawn(async move {
-                    match podcast_sync::sync_once_with_interval(
-                        &config,
-                        &cmd_tx,
-                        &db_path,
-                        Some(0),
-                    )
-                    .await
+                    match podcast_sync::sync_once_with_interval(&config, &cmd_tx, &db_path, Some(0))
+                        .await
                     {
                         Ok(stats) => {
                             info!(
@@ -600,8 +613,7 @@ fn player_loop(
                 );
                 let config = player.config.clone();
                 let stream_tx = player.stream_tx.clone();
-                let db_path = utils::get_app_config_path()
-                    .unwrap_or_else(|_| PathBuf::from("."));
+                let db_path = utils::get_app_config_path().unwrap_or_else(|_| PathBuf::from("."));
 
                 tokio::spawn(async move {
                     let db = match podcast::db::Database::new(&db_path) {
@@ -623,16 +635,14 @@ fn player_loop(
                             .get_podcast_title(req.podcast_id)
                             .unwrap_or_else(|_| "unknown".to_string());
 
-                        let download_dir = match utils::create_podcast_dir(
-                            &config_read,
-                            podcast_title,
-                        ) {
-                            Ok(dir) => dir,
-                            Err(err) => {
-                                warn!("Failed to create podcast dir: {err}");
-                                continue;
-                            }
-                        };
+                        let download_dir =
+                            match utils::create_podcast_dir(&config_read, podcast_title) {
+                                Ok(dir) => dir,
+                                Err(err) => {
+                                    warn!("Failed to create podcast dir: {err}");
+                                    continue;
+                                }
+                            };
 
                         let ep_data = podcast::EpData {
                             id: 0,
@@ -651,15 +661,14 @@ fn player_loop(
                             &taskpool,
                             move |msg| {
                                 if let podcast::PodcastDLResult::DLComplete(ref ep) = msg {
-                                    let _ = stream_tx_clone.send(
-                                        termusiclib::player::UpdateEvents::PodcastSync(
-                                            termusiclib::player::UpdatePodcastSyncEvents::Progress {
-                                                podcast_title: ep.title.clone(),
-                                                episodes_found: 0,
-                                                episodes_downloaded: 1,
-                                            },
-                                        ),
-                                    );
+                                    let _ = stream_tx_clone
+                                        .send(termusiclib::player::UpdateEvents::PodcastSync(
+                                        termusiclib::player::UpdatePodcastSyncEvents::Progress {
+                                            podcast_title: ep.title.clone(),
+                                            episodes_found: 0,
+                                            episodes_downloaded: 1,
+                                        },
+                                    ));
                                 }
                             },
                         );
@@ -670,8 +679,7 @@ fn player_loop(
                 info!("PlayerCmd::PodcastAddFeed received: {url}");
                 let config = player.config.clone();
                 let _cmd_tx = player.cmd_tx.clone();
-                let db_path = utils::get_app_config_path()
-                    .unwrap_or_else(|_| PathBuf::from("."));
+                let db_path = utils::get_app_config_path().unwrap_or_else(|_| PathBuf::from("."));
                 let stream_tx = player.stream_tx.clone();
 
                 tokio::spawn(async move {
@@ -691,14 +699,9 @@ fn player_loop(
                     let feed = podcast::PodcastFeed::new(None, url, None);
 
                     let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
-                    podcast::check_feed(
-                        feed,
-                        max_retries,
-                        &taskpool,
-                        move |msg| {
-                            let _ = result_tx.send(msg);
-                        },
-                    );
+                    podcast::check_feed(feed, max_retries, &taskpool, move |msg| {
+                        let _ = result_tx.send(msg);
+                    });
 
                     // Process the result when it arrives
                     if let Some(msg) = result_rx.recv().await {
@@ -742,8 +745,8 @@ fn player_loop(
                                 if let Err(e) = db.insert_podcast(&pod_data) {
                                     error!("Failed to insert new podcast: {e:#?}");
                                 }
-                                let _ = stream_tx.send(
-                                    termusiclib::player::UpdateEvents::PodcastSync(
+                                let _ =
+                                    stream_tx.send(termusiclib::player::UpdateEvents::PodcastSync(
                                         termusiclib::player::UpdatePodcastSyncEvents::Complete(
                                             termusiclib::player::PodcastSyncCompleteStats {
                                                 podcasts_checked: 1,
@@ -752,27 +755,26 @@ fn player_loop(
                                                 episodes_enqueued: 0,
                                             },
                                         ),
-                                    ),
-                                );
+                                    ));
                             }
                             podcast::PodcastSyncResult::Error(feed) => {
-                                let _ = stream_tx.send(
-                                    termusiclib::player::UpdateEvents::PodcastSync(
+                                let _ =
+                                    stream_tx.send(termusiclib::player::UpdateEvents::PodcastSync(
                                         termusiclib::player::UpdatePodcastSyncEvents::Error {
                                             podcast_title: feed.title.unwrap_or_default(),
-                                            error_message: format!("Feed fetch failed: {}", feed.url),
+                                            error_message: format!(
+                                                "Feed fetch failed: {}",
+                                                feed.url
+                                            ),
                                         },
-                                    ),
-                                );
+                                    ));
                             }
                             _ => {}
                         }
                     }
                 });
             }
-            PlayerCmd::PlaylistLoadComplete => {
-                /* Phase 3: auto-play logic */
-            }
+            PlayerCmd::PlaylistLoadComplete => { /* Phase 3: auto-play logic */ }
             PlayerCmd::MetadataChanged => {
                 trace!("Metadata changed");
                 if let Some(track) = player.run_info.read().current_track() {
@@ -955,10 +957,19 @@ pub fn complete_background_load(
     use std::sync::atomic::Ordering;
     use termusiclib::player::{PlaylistShuffledInfo, UpdateEvents, UpdatePlaylistEvents};
 
+    // Clamp loaded_index to a valid range to handle corrupt playlist.log entries.
+    // For empty tracks, the only valid index is 0. For non-empty tracks, clamp
+    // to [0, len-1] to prevent out-of-bounds access.
+    let clamped_index = if loaded_tracks.is_empty() {
+        0
+    } else {
+        loaded_index.min(loaded_tracks.len() - 1)
+    };
+
     // Step 1: Write-lock swap — populate the shared playlist with loaded data.
     let grpc_tracks = {
         let mut write_guard = playlist.write();
-        write_guard.apply_loaded_data(loaded_index, loaded_tracks);
+        write_guard.apply_loaded_data(clamped_index, loaded_tracks);
         // Build the gRPC playlist representation while we still hold the lock.
         let grpc_tracks = write_guard.as_grpc_playlist_tracks();
         // Dropping write guard provides Release semantics for the RwLock.
@@ -972,9 +983,9 @@ pub fn complete_background_load(
     // Step 3: Send PlaylistShuffled event via stream_tx — notifies connected TUI clients.
     match grpc_tracks {
         Ok(tracks) => {
-            let event = UpdateEvents::PlaylistChanged(
-                UpdatePlaylistEvents::PlaylistShuffled(PlaylistShuffledInfo { tracks }),
-            );
+            let event = UpdateEvents::PlaylistChanged(UpdatePlaylistEvents::PlaylistShuffled(
+                PlaylistShuffledInfo { tracks },
+            ));
             if stream_tx.send(event).is_err() {
                 warn!("Stream Event not sent after background load: No Receivers");
             }
