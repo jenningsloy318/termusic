@@ -23,15 +23,39 @@
     {
       "phaseNumber": 1,
       "name": "Protocol Extension and Domain Struct Updates",
-      "status": "in_progress",
+      "status": "complete",
       "startedAt": "2026-06-26T16:39:17Z",
+      "completedAt": "2026-06-26T17:27:57Z",
+      "reviewIterations": 1,
+      "files": {
+        "created": [
+          "/home/jenningsl/development/osc/terminals/termusic/.worktree/05-async-tui-playlist-loading/lib/src/async_tui_phase1_tests.rs",
+          "/home/jenningsl/development/osc/terminals/termusic/.worktree/05-async-tui-playlist-loading/tui/src/ui/model/async_tui_phase1_playlist_tests.rs"
+        ],
+        "modified": [
+          "/home/jenningsl/development/osc/terminals/termusic/.worktree/05-async-tui-playlist-loading/lib/proto/player.proto",
+          "/home/jenningsl/development/osc/terminals/termusic/.worktree/05-async-tui-playlist-loading/lib/src/lib.rs",
+          "/home/jenningsl/development/osc/terminals/termusic/.worktree/05-async-tui-playlist-loading/lib/src/player.rs",
+          "/home/jenningsl/development/osc/terminals/termusic/.worktree/05-async-tui-playlist-loading/lib/src/track.rs",
+          "/home/jenningsl/development/osc/terminals/termusic/.worktree/05-async-tui-playlist-loading/playback/src/playlist.rs",
+          "/home/jenningsl/development/osc/terminals/termusic/.worktree/05-async-tui-playlist-loading/tui/src/ui/model/mod.rs",
+          "/home/jenningsl/development/osc/terminals/termusic/.worktree/05-async-tui-playlist-loading/tui/src/ui/model/playlist.rs"
+        ],
+        "deleted": []
+      }
+    },
+    {
+      "phaseNumber": 2,
+      "name": "Server-Side Metadata Population",
+      "status": "in_progress",
+      "startedAt": "2026-06-27T00:00:00Z",
       "completedAt": null,
       "reviewIterations": 0
     }
   ],
   "tasks": [],
   "iteration": {
-    "currentPhase": 1,
+    "currentPhase": 2,
     "totalPhases": 4,
     "loops": 0,
     "lastReviewVerdict": null

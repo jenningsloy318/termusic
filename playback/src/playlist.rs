@@ -1060,14 +1060,34 @@ impl Playlist {
                 let at_index = u64::try_from(idx).context("track index(usize) to u64")?;
                 let track_source = track.as_track_source();
 
+                // Populate title from track metadata, falling back to filename stem
+                let title = track
+                    .title()
+                    .map(std::string::ToString::to_string)
+                    .or_else(|| {
+                        track
+                            .path()
+                            .and_then(|p| p.file_stem())
+                            .map(|s| s.to_string_lossy().to_string())
+                    });
+                let optional_title = title.map(player::playlist_add_track::OptionalTitle::Title);
+
+                let artist = track.artist().map(std::string::ToString::to_string);
+                let album = track
+                    .as_track()
+                    .and_then(|td| td.album().map(std::string::ToString::to_string));
+                let has_local_file = track
+                    .as_podcast()
+                    .map(termusiclib::track::PodcastTrackData::has_localfile);
+
                 Ok(player::PlaylistAddTrack {
                     at_index,
                     duration: Some(track.duration().unwrap_or_default().into()),
                     id: Some(track_source.into()),
-                    optional_title: None,
-                    artist: None,
-                    album: None,
-                    has_local_file: None,
+                    optional_title,
+                    artist,
+                    album,
+                    has_local_file,
                 })
             })
             .collect::<Result<_>>()?;

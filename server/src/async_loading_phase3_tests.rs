@@ -124,7 +124,9 @@ mod phase3_server_startup_integration_tests {
         assert!(!playlist_is_loading.load(Ordering::Acquire));
 
         // Must have received PlaylistLoadComplete command
-        let (cmd, _cb) = cmd_rx.try_recv().expect("Must receive PlaylistLoadComplete");
+        let (cmd, _cb) = cmd_rx
+            .try_recv()
+            .expect("Must receive PlaylistLoadComplete");
         assert!(matches!(cmd, PlayerCmd::PlaylistLoadComplete));
     }
 
@@ -335,7 +337,14 @@ mod phase3_server_startup_integration_tests {
         let cmd_tx = PlayerCmdSender::new(cmd_tx_raw);
 
         let tracks = make_test_tracks(3);
-        complete_background_load(&playlist, &playlist_is_loading, &stream_tx, &cmd_tx, 0, tracks);
+        complete_background_load(
+            &playlist,
+            &playlist_is_loading,
+            &stream_tx,
+            &cmd_tx,
+            0,
+            tracks,
+        );
 
         let (cmd, _cb) = cmd_rx
             .try_recv()
@@ -445,7 +454,14 @@ mod phase3_server_startup_integration_tests {
         let cmd_tx = PlayerCmdSender::new(cmd_tx_raw);
 
         let tracks = make_test_tracks(5);
-        complete_background_load(&playlist, &playlist_is_loading, &stream_tx, &cmd_tx, 0, tracks);
+        complete_background_load(
+            &playlist,
+            &playlist_is_loading,
+            &stream_tx,
+            &cmd_tx,
+            0,
+            tracks,
+        );
 
         // PlaylistLoadComplete is still sent
         let (cmd, _cb) = cmd_rx.try_recv().expect("Must receive command");
