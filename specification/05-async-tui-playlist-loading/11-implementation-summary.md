@@ -161,3 +161,85 @@ Phase 2 populated the `as_grpc_playlist_tracks()` bulk response with full displa
 ### Next Steps
 
 Phase 2 complete. Tasks T-18 through T-22 are implemented and verified. T-23 was completed during Phase 1. T-24/T-25 are covered by existing integration tests. Ready to proceed to Phase 3 (TUI Playlist Loading Rewrite) which will consume the populated metadata fields via Track::from_grpc_metadata.
+
+---
+
+## Phase 3 — TUI Playlist Loading Rewrite
+
+- **Date**: 2026-06-27
+- **Author**: super-dev:impl-summary-writer
+- **Phase**: 3 — TUI Playlist Loading Rewrite
+- **Status**: completed
+
+---
+
+### Overview
+
+Phase 3 rewrote the TUI's playlist loading path to eliminate all filesystem I/O. The `Playback::load_from_grpc` method was rewritten to construct Track objects via `Track::from_grpc_metadata` using server-provided metadata instead of calling `Track::read_track_from_path` or querying the podcast database. The `db_pod` parameter was removed from the method signature. The `handle_playlist_add` handler was rewritten to use `Track::from_grpc_metadata` and `insert_track_at`. Dead code (`add_tracks`, `track_from_path`, `track_from_podcasturi`, and associated inline annotations) was removed. All 638 workspace tests pass including 25 new Phase 3 tests.
+
+### Files Changed
+
+- `tui/src/ui/model/mod.rs` — modified, +43/-26
+  - Purpose: Rewrote `Playback::load_from_grpc` to use `Track::from_grpc_metadata` with server-provided title, artist, album, duration, and has_local_file fields. Removed the `db_pod: &DBPod` parameter. Eliminated all `Track::read_track_from_path` and `Track::new_radio` and `Track::from_podcast_episode` calls from the load path. Registered the `async_tui_phase3_tests` test module.
+
+- `tui/src/ui/model/playlist.rs` — modified, +1/-80
+  - Purpose: Removed the `add_tracks` method (76 lines) along with its helper functions `track_from_path`, `track_from_uri`, and `track_from_podcasturi`. Also removed the now-unused imports (`Context`, `PlaylistAddTrack`, `DBPod`). This eliminates all disk I/O and database access from the TUI playlist module.
+
+- `tui/src/ui/components/playlist.rs` — modified, +19/-14
+  - Purpose: Rewrote `handle_playlist_add` to construct a Track from `PlaylistAddTrackInfo` metadata fields via `Track::from_grpc_metadata` and insert it using `insert_track_at`, replacing the old `add_tracks` call that performed disk I/O. Updated `handle_playlist_shuffled` to call `load_from_grpc` without the `db_pod` parameter.
+
+- `tui/src/ui/model/update.rs` — modified, +1/-4
+  - Purpose: Updated the `FullPlaylist` handler in the server request response processing to call `load_from_grpc` without the `db_pod` argument.
+
+- `tui/src/ui/model/async_tui_phase3_tests.rs` — created, +897/-0
+  - Purpose: 25 unit tests validating the Phase 3 rewrite: load_from_grpc without db_pod, title/artist/album population from proto, mixed source handling (Path/Url/PodcastUrl), empty playlist, missing metadata graceful handling, missing duration, missing track ID error, handle_playlist_add metadata construction, podcast with/without local file, shuffle event processing without disk I/O, multiple rapid shuffles, existing operations (swap/remove/clear) after gRPC load, insert_track_at usage, long metadata strings, performance (1000 and 5000 tracks under 100ms), and playlist replacement.
+
+- `specification/05-async-tui-playlist-loading/05-async-tui-playlist-loading-workflow-tracking.json` — modified, +19/-2
+  - Purpose: Updated workflow tracking to mark Phase 2 complete and Phase 3 in-progress.
+
+### Key Decisions
+
+#### 1. Duration extracted from proto using `Duration::from` conversion
+
+- **Context**: The proto `PlaylistAddTrack` message carries an optional Duration message (secs + nanos). The rewritten `load_from_grpc` needs to convert this to `std::time::Duration`.
+- **Decision**: Use `proto_track.duration.map(Duration::from)` which maps the proto Duration directly to std Duration via the existing From impl.
+- **Rationale**: This reuses the existing conversion trait already defined for the proto Duration type, keeping the code concise and consistent with other proto-to-domain conversions in the codebase.
+- **Reference**: `tui/src/ui/model/mod.rs`
+
+#### 2. handle_playlist_add uses fields directly from PlaylistAddTrackInfo
+
+- **Context**: The `handle_playlist_add` method receives a `PlaylistAddTrackInfo` struct with title, artist, album, duration, trackid, and has_local_file. Previously it called `add_tracks` which performed disk I/O to reconstruct metadata.
+- **Decision**: Extract metadata fields directly from the info struct and pass them to `Track::from_grpc_metadata`, then call `insert_track_at`.
+- **Rationale**: The server already performed the disk I/O and sent the metadata over gRPC. Re-reading from disk is redundant, slow, and fails when the TUI runs on a different machine. This achieves zero-I/O track insertion.
+- **Reference**: `tui/src/ui/components/playlist.rs`
+
+#### 3. Complete removal of add_tracks and helper methods
+
+- **Context**: After rewriting both `load_from_grpc` and `handle_playlist_add`, the `add_tracks`, `track_from_path`, `track_from_uri`, and `track_from_podcasturi` methods on TUIPlaylist had zero remaining callers.
+- **Decision**: Remove all four methods entirely rather than deprecating them.
+- **Rationale**: Dead code removal keeps the codebase clean. The Phase 3 risk assessment noted that non-gRPC callers might still exist, but verification confirmed no remaining callers — all playlist mutations now flow through the gRPC path and use `from_grpc_metadata`.
+- **Reference**: `tui/src/ui/model/playlist.rs`
+
+#### 4. OptionalTitle destructured inline in load_from_grpc
+
+- **Context**: The proto `optional_title` field is a oneof wrapper (`OptionalTitle::Title(String)`). The rewritten code needs to extract the inner string.
+- **Decision**: Use a closure with `proto_track.optional_title.map(|v| { let OptionalTitle::Title(v) = v; v })` to destructure inline.
+- **Rationale**: This is concise, handles the single-variant oneof without a match statement, and correctly returns `Option<String>` for the `from_grpc_metadata` constructor.
+- **Reference**: `tui/src/ui/model/mod.rs`
+
+### Deviations from Spec
+
+#### T-30 inline annotation removal was implicit
+
+- **Spec said**: Task T-30 requires explicitly removing code annotations at playlist.rs:173 and playlist.rs:187.
+- **Actual**: The annotations were located inside `track_from_path` and `track_from_podcasturi` methods. When those entire methods were deleted (T-29), the annotations were removed as part of the deletion rather than as a separate step.
+- **Reason**: The methods containing the annotations were dead code with zero callers. Deleting the entire methods is cleaner than first removing annotations and then the methods in separate steps.
+
+### Test Results
+
+- **Unit Tests**: 638/638 passing (25 new Phase 3 tests in async_tui_phase3_tests module)
+- **Integration Tests**: 0/0 (scheduled for Phase 4)
+
+### Next Steps
+
+Phase 3 complete. All 6 tasks (T-26 through T-31) are implemented and verified. The TUI now loads and displays playlists with zero filesystem access — pure in-memory transformation from gRPC data. Ready to proceed to Phase 4 (Integration Testing and Validation) which will add comprehensive end-to-end tests and performance benchmarks.

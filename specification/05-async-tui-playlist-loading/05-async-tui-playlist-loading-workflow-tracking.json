@@ -47,6 +47,23 @@
     {
       "phaseNumber": 2,
       "name": "Server-Side Metadata Population",
+      "status": "complete",
+      "startedAt": "2026-06-27T00:00:00Z",
+      "completedAt": "2026-06-26T17:58:31Z",
+      "reviewIterations": 1,
+      "files": {
+        "created": [
+          "/home/jenningsl/development/osc/terminals/termusic/.worktree/05-async-tui-playlist-loading/playback/tests/phase2_server_metadata_population_tests.rs"
+        ],
+        "modified": [
+          "/home/jenningsl/development/osc/terminals/termusic/.worktree/05-async-tui-playlist-loading/playback/src/playlist.rs"
+        ],
+        "deleted": []
+      }
+    },
+    {
+      "phaseNumber": 3,
+      "name": "TUI Playlist Loading Rewrite",
       "status": "in_progress",
       "startedAt": "2026-06-27T00:00:00Z",
       "completedAt": null,
@@ -55,7 +72,7 @@
   ],
   "tasks": [],
   "iteration": {
-    "currentPhase": 2,
+    "currentPhase": 3,
     "totalPhases": 4,
     "loops": 0,
     "lastReviewVerdict": null

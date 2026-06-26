@@ -445,15 +445,19 @@ impl Model {
     }
 
     /// Handle when a playlist has added a track
+    #[allow(clippy::unnecessary_wraps)]
     pub fn handle_playlist_add(&mut self, items: PlaylistAddTrackInfo) -> Result<()> {
-        // piggyback off-of the server side implementation for now by re-parsing everything.
-        self.playback.playlist.add_tracks(
-            PlaylistAddTrack {
-                at_index: items.at_index,
-                tracks: vec![items.trackid],
-            },
-            &self.podcast.db_podcast,
-        )?;
+        let index = usize::try_from(items.at_index).unwrap_or(usize::MAX);
+        let duration = Some(items.duration);
+        let track = Track::from_grpc_metadata(
+            items.trackid,
+            items.title,
+            items.artist,
+            items.album,
+            duration,
+            items.has_local_file,
+        );
+        self.playback.playlist.insert_track_at(index, track);
 
         self.playlist_sync();
 
@@ -513,8 +517,7 @@ impl Model {
             .and_then(|idx| self.playback.playlist.tracks().get(idx))
             .map(Track::as_track_source);
 
-        self.playback
-            .load_from_grpc(shuffled.tracks, &self.podcast.db_podcast)?;
+        self.playback.load_from_grpc(shuffled.tracks)?;
         self.playlist_sync();
 
         if let Some(old_id) = playlist_track_at_old_file {

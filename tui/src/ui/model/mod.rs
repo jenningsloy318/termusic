@@ -46,6 +46,8 @@ pub mod youtube_options;
 
 #[cfg(test)]
 mod async_tui_phase1_playlist_tests;
+#[cfg(test)]
+mod async_tui_phase3_tests;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TermusicLayout {
@@ -178,46 +180,47 @@ impl Playback {
         self.current_track_pos = pos;
     }
 
-    /// Load Tracks from a GRPC response.
+    /// Load Tracks from a GRPC response. Zero disk I/O.
     ///
-    /// Returns `(Position, Tracks[])`.
+    /// Constructs Track objects from server-provided metadata via
+    /// [`Track::from_grpc_metadata`] without any filesystem access.
     ///
     /// # Errors
     ///
     /// - when converting from u64 grpc values to usize fails
     /// - when there is no track-id
-    /// - when reading a Track from path or podcast database fails
-    pub fn load_from_grpc(
-        &mut self,
-        info: PlaylistTracks,
-        podcast_db: &DBPod,
-    ) -> anyhow::Result<()> {
+    pub fn load_from_grpc(&mut self, info: PlaylistTracks) -> anyhow::Result<()> {
+        use termusiclib::player::playlist_add_track::OptionalTitle;
+
         let current_track_index = usize::try_from(info.current_track_index)
             .context("convert current_track_index(u64) to usize")?;
         let mut playlist_items = Vec::with_capacity(info.tracks.len());
 
-        for (idx, track) in info.tracks.into_iter().enumerate() {
+        for (idx, proto_track) in info.tracks.into_iter().enumerate() {
             let at_index_usize =
-                usize::try_from(track.at_index).context("convert at_index(u64) to usize")?;
+                usize::try_from(proto_track.at_index).context("convert at_index(u64) to usize")?;
             // assume / require that the tracks are ordered correctly, if not just log a error for now
             if idx != at_index_usize {
                 error!("Non-matching \"index\" and \"at_index\"!");
             }
 
             // this case should never happen with "termusic-server", but grpc marks them as "optional"
-            let Some(id) = track.id else {
+            let Some(id) = proto_track.id else {
                 bail!("Track does not have a id, which is required to load!");
             };
 
-            let track = match PlaylistTrackSource::try_from(id)? {
-                PlaylistTrackSource::Path(v) => Track::read_track_from_path(v)?,
-                PlaylistTrackSource::Url(v) => Track::new_radio(&v),
-                PlaylistTrackSource::PodcastUrl(v) => {
-                    let episode = podcast_db.get_episode_by_url(&v)?;
-                    Track::from_podcast_episode(&episode)
-                }
-            };
+            let source = PlaylistTrackSource::try_from(id)?;
+            let title = proto_track.optional_title.map(|v| {
+                let OptionalTitle::Title(v) = v;
+                v
+            });
+            let duration = proto_track.duration.map(Duration::from);
+            let artist = proto_track.artist;
+            let album = proto_track.album;
+            let has_local_file = proto_track.has_local_file.unwrap_or(false);
 
+            let track =
+                Track::from_grpc_metadata(source, title, artist, album, duration, has_local_file);
             playlist_items.push(track);
         }
 
