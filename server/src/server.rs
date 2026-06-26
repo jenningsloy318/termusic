@@ -35,6 +35,8 @@ mod async_loading_phase1_tests;
 #[cfg(test)]
 mod async_loading_phase2_tests;
 #[cfg(test)]
+mod async_loading_phase3_tests;
+#[cfg(test)]
 mod async_loading_phase34_tests;
 mod cli;
 mod connection;
@@ -156,8 +158,7 @@ async fn actual_main() -> Result<()> {
     // Note that the channel size might quickly become too low if there is a massive delete (like removing the non-existent tracks from the playlist)
     let (stream_tx, _) = broadcast::channel(10);
 
-    let playlist =
-        Playlist::new_shared(&config, stream_tx.clone()).context("Failed to load playlist")?;
+    let playlist: SharedPlaylist = Arc::new(RwLock::new(Playlist::new(&config, stream_tx.clone())));
 
     let run_info = Arc::new(RwLock::new(RunInfo::default()));
 
@@ -189,14 +190,23 @@ async fn actual_main() -> Result<()> {
 
     let cancel_token = service_cancel_token.clone();
     let playlist_c = playlist.clone();
-    // PlaylistLoadingFlag set to false: background loading is not yet wired into
-    // the startup sequence (Phase 3). Once integrated, this will be the real flag.
-    let playlist_is_loading: PlaylistLoadingFlag = Arc::new(AtomicBool::new(false));
+    let playlist_is_loading: PlaylistLoadingFlag = Arc::new(AtomicBool::new(true));
     start_playlist_save_interval(
         tokio_handle.clone(),
         cancel_token,
         playlist_c,
+        playlist_is_loading.clone(),
+    );
+
+    // Spawn background playlist metadata loading (AC-01, AC-02)
+    start_background_playlist_load(
+        tokio_handle.clone(),
+        service_cancel_token.clone(),
+        playlist.clone(),
         playlist_is_loading,
+        stream_tx.clone(),
+        cmd_tx.clone(),
+        config.clone(),
     );
 
     // Spawn the periodic podcast sync task if enabled (AC-02, AC-11, SCENARIO-005, SCENARIO-020)
@@ -358,10 +368,9 @@ fn player_loop(
     let mut had_enqueue_error = false;
     let mut should_quit = false;
 
-    // Start the playback, if wanted on startup
-    if player.config.read().settings.player.startup_state == StartupState::Playing {
-        player.resume_from_stopped();
-    }
+    // Auto-play is deferred to PlaylistLoadComplete handler (AC-06, T-15)
+    // The playlist is empty at this point; playback starts only after
+    // background loading completes and sends PlaylistLoadComplete.
 
     while let Some((cmd, cb)) = cmd_rx.blocking_recv() {
         #[allow(unreachable_patterns)]
@@ -774,7 +783,12 @@ fn player_loop(
                     }
                 });
             }
-            PlayerCmd::PlaylistLoadComplete => { /* Phase 3: auto-play logic */ }
+            PlayerCmd::PlaylistLoadComplete => {
+                info!("Background playlist load complete");
+                if player.config.read().settings.player.startup_state == StartupState::Playing {
+                    player.resume_from_stopped();
+                }
+            }
             PlayerCmd::MetadataChanged => {
                 trace!("Metadata changed");
                 if let Some(track) = player.run_info.read().current_track() {
