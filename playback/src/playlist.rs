@@ -291,6 +291,17 @@ impl Playlist {
         Ok(())
     }
 
+    /// Apply pre-loaded data to this playlist instance.
+    ///
+    /// Used by the background loading task to populate the playlist after
+    /// metadata loading completes on a dedicated thread pool.
+    /// Does NOT mark the playlist as modified (since the data matches disk state).
+    pub fn apply_loaded_data(&mut self, current_track_index: usize, tracks: Vec<Track>) {
+        self.current_track_index = current_track_index;
+        self.tracks = tracks;
+        self.is_modified = false;
+    }
+
     /// Load Tracks from a GRPC response.
     ///
     /// Returns `(Position, Tracks[])`.

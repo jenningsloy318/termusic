@@ -300,7 +300,10 @@ fn prepare_download_plan(
 
 /// Scan a podcast's download directory for existing filenames using async I/O.
 /// Returns an empty set if the directory cannot be created or read.
-async fn scan_podcast_dir(config: &termusiclib::config::ServerOverlay, title: &str) -> HashSet<String> {
+async fn scan_podcast_dir(
+    config: &termusiclib::config::ServerOverlay,
+    title: &str,
+) -> HashSet<String> {
     let dir_path = match create_podcast_dir(config, title.to_owned()) {
         Ok(p) => p,
         Err(err) => {
@@ -349,8 +352,7 @@ pub async fn sync_once_with_interval(
     let podcast_settings = config.read().settings.podcast.clone();
     let concurrent_downloads_max = usize::from(podcast_settings.concurrent_downloads_max.get());
     let max_download_retries = usize::from(podcast_settings.max_download_retries);
-    let interval_secs = interval_override
-        .unwrap_or(sync_settings.interval.as_secs() as i64);
+    let interval_secs = interval_override.unwrap_or(sync_settings.interval.as_secs() as i64);
 
     let due_podcasts = db
         .due_podcasts(interval_secs)

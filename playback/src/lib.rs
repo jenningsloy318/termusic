@@ -152,6 +152,10 @@ pub enum PlayerCmd {
     PodcastDownloadEpisodes(Vec<EpisodeDownloadRequest>),
     /// Request to add a new podcast by feed URL.
     PodcastAddFeed(String),
+
+    /// Background playlist metadata loading has completed.
+    /// Triggers auto-play if `startup_state` is Playing.
+    PlaylistLoadComplete,
 }
 
 /// Download request for a single podcast episode.

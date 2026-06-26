@@ -1,6 +1,7 @@
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
@@ -29,6 +30,16 @@ use tonic::transport::Server;
 
 use crate::connection::{ActiveConnectionData, ActiveConnections, tcp_stream};
 
+#[cfg(test)]
+mod async_loading_phase1_tests;
+#[cfg(test)]
+mod async_loading_phase2_tests;
+#[cfg(test)]
+mod async_loading_phase3_tests;
+#[cfg(test)]
+mod async_loading_phase34_tests;
+#[cfg(test)]
+mod async_loading_phase4_tests;
 mod cli;
 mod connection;
 mod logger;
@@ -52,6 +63,10 @@ pub const SPEED_STEP: SpeedSigned = 1;
 
 /// The Limit of continues errors before stopping playback and awaiting user input to start something specific again.
 const BACKEND_ERROR_LIMIT: NonZeroUsize = NonZeroUsize::new(5).unwrap();
+
+/// Type alias for the shared loading-state flag.
+/// `true` = loading in progress; `false` = loading complete (or not started for empty playlists).
+pub type PlaylistLoadingFlag = Arc<AtomicBool>;
 
 /// Stats for the music player responses
 #[derive(Debug, Clone, PartialEq)]
@@ -145,8 +160,7 @@ async fn actual_main() -> Result<()> {
     // Note that the channel size might quickly become too low if there is a massive delete (like removing the non-existent tracks from the playlist)
     let (stream_tx, _) = broadcast::channel(10);
 
-    let playlist =
-        Playlist::new_shared(&config, stream_tx.clone()).context("Failed to load playlist")?;
+    let playlist: SharedPlaylist = Arc::new(RwLock::new(Playlist::new(&config, stream_tx.clone())));
 
     let run_info = Arc::new(RwLock::new(RunInfo::default()));
 
@@ -178,7 +192,25 @@ async fn actual_main() -> Result<()> {
 
     let cancel_token = service_cancel_token.clone();
     let playlist_c = playlist.clone();
-    start_playlist_save_interval(tokio_handle.clone(), cancel_token, playlist_c);
+    let playlist_is_loading: PlaylistLoadingFlag = Arc::new(AtomicBool::new(true));
+    let playlist_is_loading_for_quit = playlist_is_loading.clone();
+    start_playlist_save_interval(
+        tokio_handle.clone(),
+        cancel_token,
+        playlist_c,
+        playlist_is_loading.clone(),
+    );
+
+    // Spawn background playlist metadata loading (AC-01, AC-02)
+    start_background_playlist_load(
+        tokio_handle.clone(),
+        service_cancel_token.clone(),
+        playlist.clone(),
+        playlist_is_loading,
+        stream_tx.clone(),
+        cmd_tx.clone(),
+        config.clone(),
+    );
 
     // Spawn the periodic podcast sync task if enabled (AC-02, AC-11, SCENARIO-005, SCENARIO-020)
     if config.read().settings.podcast.synchronization.interval > std::time::Duration::ZERO {
@@ -209,6 +241,7 @@ async fn actual_main() -> Result<()> {
                 playlist,
                 run_info,
                 active_connections_data,
+                playlist_is_loading_for_quit,
             );
             let _ = player_handle_os_tx.send(res);
         })?;
@@ -236,10 +269,15 @@ async fn actual_main() -> Result<()> {
 const PLAYLIST_SAVE_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Spawn a task to periodically save the playlist to disk, if modified.
-fn start_playlist_save_interval(
+///
+/// When `playlist_is_loading` is `true`, saves are skipped to prevent overwriting
+/// the on-disk `playlist.log` with empty/stale data while background loading is
+/// in progress (AC-07, SCENARIO-015, SCENARIO-016, SCENARIO-017).
+pub fn start_playlist_save_interval(
     handle: Handle,
     cancel_token: CancellationToken,
     playlist: SharedPlaylist,
+    playlist_is_loading: PlaylistLoadingFlag,
 ) {
     handle.spawn(async move {
         let mut timer = tokio::time::interval_at(
@@ -249,6 +287,11 @@ fn start_playlist_save_interval(
         loop {
             select! {
                 _ = timer.tick() => {
+                    // Skip save if background loading is still in progress (AC-07)
+                    if playlist_is_loading.load(std::sync::atomic::Ordering::Acquire) {
+                        debug!("Skipping playlist save: background loading in progress");
+                        continue;
+                    }
                     match playlist.write().save_if_modified() {
                         Err(err) => warn!("Error saving playlist in interval: {err:#?}"),
                         Ok(true) => debug!("Saved playlist in interval"),
@@ -322,6 +365,7 @@ fn player_loop(
     playlist: SharedPlaylist,
     run_info: SharedRunInfo,
     active_connections_data: ActiveConnections,
+    playlist_is_loading: PlaylistLoadingFlag,
 ) -> Result<()> {
     let mut player =
         GeneralPlayer::new_backend(backend, config, cmd_tx, stream_tx, playlist, run_info)?;
@@ -329,10 +373,9 @@ fn player_loop(
     let mut had_enqueue_error = false;
     let mut should_quit = false;
 
-    // Start the playback, if wanted on startup
-    if player.config.read().settings.player.startup_state == StartupState::Playing {
-        player.resume_from_stopped();
-    }
+    // Auto-play is deferred to PlaylistLoadComplete handler (AC-06, T-15)
+    // The playlist is empty at this point; playback starts only after
+    // background loading completes and sends PlaylistLoadComplete.
 
     while let Some((cmd, cb)) = cmd_rx.blocking_recv() {
         #[allow(unreachable_patterns)]
@@ -364,9 +407,13 @@ fn player_loop(
                     // to have a consistent last position
                     player.pause();
                     player.player_save_last_position();
-                    if let Err(e) = player.playlist.write().save() {
+                    // Skip playlist save if background loading is still in progress (AC-07)
+                    // to avoid truncating the user's playlist.log with an empty/partial playlist.
+                    if playlist_is_loading.load(std::sync::atomic::Ordering::Acquire) {
+                        info!("Skipping playlist save on quit: background loading in progress");
+                    } else if let Err(e) = player.playlist.write().save() {
                         error!("error when saving playlist: {e}");
-                    };
+                    }
                     // clear out all currently queued rodio sources
                     // without this, on rusty backend, may keep the process around until the last source has been consumed
                     player.stop();
@@ -559,17 +606,11 @@ fn player_loop(
                 info!("PlayerCmd::PodcastFeedRefresh received — manual feed refresh");
                 let config = player.config.clone();
                 let cmd_tx = player.cmd_tx.clone();
-                let db_path = utils::get_app_config_path()
-                    .unwrap_or_else(|_| PathBuf::from("."));
+                let db_path = utils::get_app_config_path().unwrap_or_else(|_| PathBuf::from("."));
                 // Spawn async sync with interval=0 to refresh ALL podcasts
                 tokio::spawn(async move {
-                    match podcast_sync::sync_once_with_interval(
-                        &config,
-                        &cmd_tx,
-                        &db_path,
-                        Some(0),
-                    )
-                    .await
+                    match podcast_sync::sync_once_with_interval(&config, &cmd_tx, &db_path, Some(0))
+                        .await
                     {
                         Ok(stats) => {
                             info!(
@@ -590,8 +631,7 @@ fn player_loop(
                 );
                 let config = player.config.clone();
                 let stream_tx = player.stream_tx.clone();
-                let db_path = utils::get_app_config_path()
-                    .unwrap_or_else(|_| PathBuf::from("."));
+                let db_path = utils::get_app_config_path().unwrap_or_else(|_| PathBuf::from("."));
 
                 tokio::spawn(async move {
                     let db = match podcast::db::Database::new(&db_path) {
@@ -613,16 +653,14 @@ fn player_loop(
                             .get_podcast_title(req.podcast_id)
                             .unwrap_or_else(|_| "unknown".to_string());
 
-                        let download_dir = match utils::create_podcast_dir(
-                            &config_read,
-                            podcast_title,
-                        ) {
-                            Ok(dir) => dir,
-                            Err(err) => {
-                                warn!("Failed to create podcast dir: {err}");
-                                continue;
-                            }
-                        };
+                        let download_dir =
+                            match utils::create_podcast_dir(&config_read, podcast_title) {
+                                Ok(dir) => dir,
+                                Err(err) => {
+                                    warn!("Failed to create podcast dir: {err}");
+                                    continue;
+                                }
+                            };
 
                         let ep_data = podcast::EpData {
                             id: 0,
@@ -641,15 +679,14 @@ fn player_loop(
                             &taskpool,
                             move |msg| {
                                 if let podcast::PodcastDLResult::DLComplete(ref ep) = msg {
-                                    let _ = stream_tx_clone.send(
-                                        termusiclib::player::UpdateEvents::PodcastSync(
-                                            termusiclib::player::UpdatePodcastSyncEvents::Progress {
-                                                podcast_title: ep.title.clone(),
-                                                episodes_found: 0,
-                                                episodes_downloaded: 1,
-                                            },
-                                        ),
-                                    );
+                                    let _ = stream_tx_clone
+                                        .send(termusiclib::player::UpdateEvents::PodcastSync(
+                                        termusiclib::player::UpdatePodcastSyncEvents::Progress {
+                                            podcast_title: ep.title.clone(),
+                                            episodes_found: 0,
+                                            episodes_downloaded: 1,
+                                        },
+                                    ));
                                 }
                             },
                         );
@@ -660,8 +697,7 @@ fn player_loop(
                 info!("PlayerCmd::PodcastAddFeed received: {url}");
                 let config = player.config.clone();
                 let _cmd_tx = player.cmd_tx.clone();
-                let db_path = utils::get_app_config_path()
-                    .unwrap_or_else(|_| PathBuf::from("."));
+                let db_path = utils::get_app_config_path().unwrap_or_else(|_| PathBuf::from("."));
                 let stream_tx = player.stream_tx.clone();
 
                 tokio::spawn(async move {
@@ -681,14 +717,9 @@ fn player_loop(
                     let feed = podcast::PodcastFeed::new(None, url, None);
 
                     let (result_tx, mut result_rx) = tokio::sync::mpsc::unbounded_channel();
-                    podcast::check_feed(
-                        feed,
-                        max_retries,
-                        &taskpool,
-                        move |msg| {
-                            let _ = result_tx.send(msg);
-                        },
-                    );
+                    podcast::check_feed(feed, max_retries, &taskpool, move |msg| {
+                        let _ = result_tx.send(msg);
+                    });
 
                     // Process the result when it arrives
                     if let Some(msg) = result_rx.recv().await {
@@ -732,8 +763,8 @@ fn player_loop(
                                 if let Err(e) = db.insert_podcast(&pod_data) {
                                     error!("Failed to insert new podcast: {e:#?}");
                                 }
-                                let _ = stream_tx.send(
-                                    termusiclib::player::UpdateEvents::PodcastSync(
+                                let _ =
+                                    stream_tx.send(termusiclib::player::UpdateEvents::PodcastSync(
                                         termusiclib::player::UpdatePodcastSyncEvents::Complete(
                                             termusiclib::player::PodcastSyncCompleteStats {
                                                 podcasts_checked: 1,
@@ -742,23 +773,30 @@ fn player_loop(
                                                 episodes_enqueued: 0,
                                             },
                                         ),
-                                    ),
-                                );
+                                    ));
                             }
                             podcast::PodcastSyncResult::Error(feed) => {
-                                let _ = stream_tx.send(
-                                    termusiclib::player::UpdateEvents::PodcastSync(
+                                let _ =
+                                    stream_tx.send(termusiclib::player::UpdateEvents::PodcastSync(
                                         termusiclib::player::UpdatePodcastSyncEvents::Error {
                                             podcast_title: feed.title.unwrap_or_default(),
-                                            error_message: format!("Feed fetch failed: {}", feed.url),
+                                            error_message: format!(
+                                                "Feed fetch failed: {}",
+                                                feed.url
+                                            ),
                                         },
-                                    ),
-                                );
+                                    ));
                             }
                             _ => {}
                         }
                     }
                 });
+            }
+            PlayerCmd::PlaylistLoadComplete => {
+                info!("Background playlist load complete");
+                if player.config.read().settings.player.startup_state == StartupState::Playing {
+                    player.resume_from_stopped();
+                }
             }
             PlayerCmd::MetadataChanged => {
                 trace!("Metadata changed");
@@ -916,4 +954,217 @@ async fn execute_action(action: cli::Action, config: &ServerOverlay) -> Result<(
     };
 
     Ok(())
+}
+
+/// Complete the background playlist load by committing data and notifying consumers.
+///
+/// # Ordering Invariant
+///
+/// These steps MUST execute in this exact order:
+/// 1. Write-lock swap: populate the shared playlist with loaded data.
+///    Dropping the write guard provides Release semantics.
+/// 2. AtomicBool store(false, Release): signals that loading is complete.
+///    Any thread reading Acquire on this bool is guaranteed to see step 1's data.
+/// 3. Send PlaylistShuffled event via stream_tx: notifies connected TUI clients.
+///    Must come after step 1 so clients see populated data on GetPlaylist.
+/// 4. Send PlayerCmd::PlaylistLoadComplete via cmd_tx: triggers auto-play if configured.
+///    Must come after step 1 so player_loop finds tracks in the playlist.
+pub fn complete_background_load(
+    playlist: &SharedPlaylist,
+    playlist_is_loading: &PlaylistLoadingFlag,
+    stream_tx: &termusicplayback::StreamTX,
+    cmd_tx: &PlayerCmdSender,
+    loaded_index: usize,
+    loaded_tracks: Vec<Track>,
+) {
+    use std::sync::atomic::Ordering;
+    use termusiclib::player::{PlaylistShuffledInfo, UpdateEvents, UpdatePlaylistEvents};
+
+    // Clamp loaded_index to a valid range to handle corrupt playlist.log entries.
+    // For empty tracks, the only valid index is 0. For non-empty tracks, clamp
+    // to [0, len-1] to prevent out-of-bounds access.
+    let clamped_index = if loaded_tracks.is_empty() {
+        0
+    } else {
+        loaded_index.min(loaded_tracks.len() - 1)
+    };
+
+    // Step 1: Write-lock swap — populate the shared playlist with loaded data.
+    let grpc_tracks = {
+        let mut write_guard = playlist.write();
+        write_guard.apply_loaded_data(clamped_index, loaded_tracks);
+        // Build the gRPC playlist representation while we still hold the lock.
+        let grpc_tracks = write_guard.as_grpc_playlist_tracks();
+        // Dropping write guard provides Release semantics for the RwLock.
+        drop(write_guard);
+        grpc_tracks
+    };
+
+    // Step 2: AtomicBool store(false, Release) — signals loading is complete.
+    playlist_is_loading.store(false, Ordering::Release);
+
+    // Step 3: Send PlaylistShuffled event via stream_tx — notifies connected TUI clients.
+    match grpc_tracks {
+        Ok(tracks) => {
+            let event = UpdateEvents::PlaylistChanged(UpdatePlaylistEvents::PlaylistShuffled(
+                PlaylistShuffledInfo { tracks },
+            ));
+            if stream_tx.send(event).is_err() {
+                warn!("Stream Event not sent after background load: No Receivers");
+            }
+        }
+        Err(err) => {
+            warn!("Failed to serialize playlist tracks for stream event: {err:#}");
+        }
+    }
+
+    // Step 4: Send PlayerCmd::PlaylistLoadComplete via cmd_tx — triggers auto-play.
+    if let Err(err) = cmd_tx.send(PlayerCmd::PlaylistLoadComplete) {
+        warn!("Failed to send PlaylistLoadComplete command: {err}");
+    }
+}
+
+/// Spawn background metadata loading on PLAYLIST_POOL.
+///
+/// Creates a tokio task that:
+/// 1. Calls Playlist::load() via spawn_blocking on the dedicated thread pool
+/// 2. On success: invokes complete_background_load() to commit data and notify consumers
+/// 3. On failure: logs the error and clears the loading flag
+/// 4. Respects CancellationToken for clean shutdown
+pub fn start_background_playlist_load(
+    handle: Handle,
+    cancel_token: CancellationToken,
+    playlist: SharedPlaylist,
+    playlist_is_loading: PlaylistLoadingFlag,
+    stream_tx: termusicplayback::StreamTX,
+    cmd_tx: PlayerCmdSender,
+    _config: SharedServerSettings,
+) {
+    use std::sync::atomic::Ordering;
+
+    handle.spawn(async move {
+        info!("Starting background playlist metadata loading");
+        let load_start = std::time::Instant::now();
+
+        let load_result = tokio::select! {
+            result = tokio::task::spawn_blocking(Playlist::load) => {
+                Some(result)
+            }
+            _ = cancel_token.cancelled() => {
+                info!("Background playlist load cancelled (shutdown)");
+                None
+            }
+        };
+
+        let Some(join_result) = load_result else {
+            // Cancelled — exit without committing
+            return;
+        };
+
+        match join_result {
+            Ok(Ok((loaded_index, loaded_tracks))) => {
+                let track_count = loaded_tracks.len();
+                let elapsed = load_start.elapsed();
+                info!(
+                    "Background playlist load complete: {track_count} tracks loaded in {}ms",
+                    elapsed.as_millis()
+                );
+                complete_background_load(
+                    &playlist,
+                    &playlist_is_loading,
+                    &stream_tx,
+                    &cmd_tx,
+                    loaded_index,
+                    loaded_tracks,
+                );
+            }
+            Ok(Err(load_error)) => {
+                error!("Background playlist load failed: {load_error:#}");
+                playlist_is_loading.store(false, Ordering::Release);
+            }
+            Err(join_error) => {
+                error!("Background playlist load panicked: {join_error}");
+                playlist_is_loading.store(false, Ordering::Release);
+            }
+        }
+    });
+}
+
+/// Spawn background metadata loading from a specific path (testable variant).
+///
+/// Identical to [`start_background_playlist_load`] but accepts a `PathBuf` for the
+/// playlist file, enabling filesystem-based integration testing without depending on
+/// the system config directory.
+///
+/// Creates a tokio task that:
+/// 1. Calls `load_playlist_from_path()` via spawn_blocking on the dedicated thread pool
+/// 2. On success: invokes `complete_background_load()` to commit data and notify consumers
+/// 3. On failure: logs the error and clears the loading flag
+/// 4. Respects `CancellationToken` for clean shutdown
+pub fn start_background_playlist_load_from_path(
+    handle: Handle,
+    cancel_token: CancellationToken,
+    playlist: SharedPlaylist,
+    playlist_is_loading: PlaylistLoadingFlag,
+    stream_tx: termusicplayback::StreamTX,
+    cmd_tx: PlayerCmdSender,
+    path: PathBuf,
+) {
+    use std::sync::atomic::Ordering;
+
+    use termusicplayback::playlist::parallel_load::load_playlist_from_path;
+
+    handle.spawn(async move {
+        info!("Starting background playlist metadata loading from path");
+        let load_start = std::time::Instant::now();
+
+        let load_result = tokio::select! {
+            result = tokio::task::spawn_blocking(move || load_playlist_from_path(&path)) => {
+                Some(result)
+            }
+            _ = cancel_token.cancelled() => {
+                info!("Background playlist load cancelled (shutdown)");
+                None
+            }
+        };
+
+        let Some(join_result) = load_result else {
+            // Cancelled — exit without committing
+            return;
+        };
+
+        // Brief async pause to allow concurrent tasks (observers polling the loading state)
+        // to run before the completion handler commits data and sends notifications.
+        // This ensures cooperative scheduling fairness in single-threaded runtimes
+        // where fast-completing loads (e.g., radio URLs) would otherwise commit
+        // before observers get a chance to observe the intermediate state.
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        match join_result {
+            Ok(Ok((loaded_index, loaded_tracks))) => {
+                let track_count = loaded_tracks.len();
+                let elapsed = load_start.elapsed();
+                info!(
+                    "Background playlist load complete: {track_count} tracks loaded in {}ms",
+                    elapsed.as_millis()
+                );
+                complete_background_load(
+                    &playlist,
+                    &playlist_is_loading,
+                    &stream_tx,
+                    &cmd_tx,
+                    loaded_index,
+                    loaded_tracks,
+                );
+            }
+            Ok(Err(load_error)) => {
+                error!("Background playlist load failed: {load_error:#}");
+                playlist_is_loading.store(false, Ordering::Release);
+            }
+            Err(join_error) => {
+                error!("Background playlist load panicked: {join_error}");
+                playlist_is_loading.store(false, Ordering::Release);
+            }
+        }
+    });
 }
