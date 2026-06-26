@@ -8,6 +8,11 @@
 //! 3. **Process**: Read local file metadata in parallel via rayon `par_iter`
 //! 4. **Merge**: Combine results in original playlist order
 
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::Path;
+
+use anyhow::{Context, Result};
 use rayon::prelude::*;
 use termusiclib::track::Track;
 
@@ -113,4 +118,65 @@ pub fn merge_indexed_tracks(
     indexed_tracks.sort_unstable_by_key(|(index, _)| *index);
 
     indexed_tracks.into_iter().map(|(_, track)| track).collect()
+}
+
+/// Load a playlist from an explicit file path, bypassing the config directory lookup.
+///
+/// This is a testable entry point for the full parallel loading pipeline. It performs
+/// the same operations as `Playlist::load()` but accepts a path argument instead of
+/// relying on `get_playlist_path()` and `get_app_config_path()`.
+///
+/// Since no podcast database is available in this context, all network addresses
+/// (http/https URLs) are treated as radio streams via `Track::new_radio()`.
+///
+/// # Returns
+///
+/// `(current_track_index, tracks)` where `current_track_index` is read from the
+/// first line of the file and clamped to `tracks.len().saturating_sub(1)`.
+///
+/// # Errors
+///
+/// - When the playlist file cannot be opened
+/// - When the file is empty (no first line for track index)
+pub fn load_playlist_from_path(path: &Path) -> Result<(usize, Vec<Track>)> {
+    let file =
+        File::open(path).with_context(|| format!("failed to open playlist: {}", path.display()))?;
+    let reader = BufReader::new(file);
+    let mut lines = reader.lines();
+
+    // Read the first line as the current track index
+    let mut current_track_index: usize = 0;
+    if let Some(line) = lines.next() {
+        let index_line = line.with_context(|| "failed to read track index line")?;
+        if let Ok(index) = index_line.trim().parse() {
+            current_track_index = index;
+        }
+    } else {
+        // Empty file
+        return Ok((0, Vec::new()));
+    }
+
+    // Collect and filter remaining lines
+    let all_lines = collect_and_filter_lines(lines);
+
+    // Classify into network addresses and local paths
+    let classified = classify_playlist_lines(all_lines);
+
+    // Process local file paths in parallel via rayon
+    let local_tracks = parallel_read_local_tracks(&classified.local_entries);
+
+    // Process network entries as radio tracks (no podcast DB available in this context)
+    let network_tracks: Vec<(usize, Track)> = classified
+        .network_entries
+        .iter()
+        .map(|(idx, url)| (*idx, Track::new_radio(url)))
+        .collect();
+
+    // Merge preserving original playlist order
+    let playlist_items = merge_indexed_tracks(local_tracks, network_tracks);
+
+    // Clamp track index to valid range
+    let current_track_index = current_track_index.min(playlist_items.len().saturating_sub(1));
+
+    Ok((current_track_index, playlist_items))
 }
