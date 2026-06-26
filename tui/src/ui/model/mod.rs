@@ -37,12 +37,15 @@ pub use download_tracker::DownloadTracker;
 pub use user_events::UserEvent;
 
 mod download_tracker;
-mod playlist;
+pub mod playlist;
 mod ports;
 mod update;
 mod user_events;
 mod view;
 pub mod youtube_options;
+
+#[cfg(test)]
+mod async_tui_phase1_playlist_tests;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TermusicLayout {

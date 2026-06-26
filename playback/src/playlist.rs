@@ -670,9 +670,14 @@ impl Playlist {
             PlaylistAddTrackInfo {
                 at_index: u64::try_from(self.tracks.len()).unwrap(),
                 title: track.title().map(ToOwned::to_owned),
+                artist: track.artist().map(ToOwned::to_owned),
+                album: track.as_podcast().and(None::<String>),
                 duration: track.duration().unwrap_or_default(),
                 // Note: Safe unwrap, as a podcast uri is always a uri, not a path (which has been a string before)
                 trackid: PlaylistTrackSource::PodcastUrl(url.to_owned()),
+                has_local_file: track
+                    .as_podcast()
+                    .is_some_and(termusiclib::track::PodcastTrackData::has_localfile),
             },
         ));
 
@@ -724,8 +729,13 @@ impl Playlist {
             PlaylistAddTrackInfo {
                 at_index: u64::try_from(self.tracks.len()).unwrap(),
                 title: track.title().map(ToOwned::to_owned),
+                artist: track.artist().map(ToOwned::to_owned),
+                album: track
+                    .as_track()
+                    .and_then(|t| t.album().map(ToOwned::to_owned)),
                 duration: track.duration().unwrap_or_default(),
                 trackid: PlaylistTrackSource::Path(track_str.to_string()),
+                has_local_file: false,
             },
         ));
 
@@ -792,8 +802,15 @@ impl Playlist {
                     PlaylistAddTrackInfo {
                         at_index: u64::try_from(self.tracks.len()).unwrap(),
                         title: track.title().map(ToOwned::to_owned),
+                        artist: track.artist().map(ToOwned::to_owned),
+                        album: track
+                            .as_track()
+                            .and_then(|t| t.album().map(ToOwned::to_owned)),
                         duration: track.duration().unwrap_or_default(),
                         trackid: track_location,
+                        has_local_file: track
+                            .as_podcast()
+                            .is_some_and(termusiclib::track::PodcastTrackData::has_localfile),
                     },
                 ));
 
@@ -818,8 +835,15 @@ impl Playlist {
                     PlaylistAddTrackInfo {
                         at_index: u64::try_from(at_index).unwrap(),
                         title: track.title().map(ToOwned::to_owned),
+                        artist: track.artist().map(ToOwned::to_owned),
+                        album: track
+                            .as_track()
+                            .and_then(|t| t.album().map(ToOwned::to_owned)),
                         duration: track.duration().unwrap_or_default(),
                         trackid: track_location,
+                        has_local_file: track
+                            .as_podcast()
+                            .is_some_and(termusiclib::track::PodcastTrackData::has_localfile),
                     },
                 ));
 
@@ -1041,6 +1065,9 @@ impl Playlist {
                     duration: Some(track.duration().unwrap_or_default().into()),
                     id: Some(track_source.into()),
                     optional_title: None,
+                    artist: None,
+                    album: None,
+                    has_local_file: None,
                 })
             })
             .collect::<Result<_>>()?;

@@ -1,0 +1,43 @@
+{
+  "constants": {
+    "wire_overhead_per_track": {
+      "spec_value": 200,
+      "measured_avg": 95.5,
+      "measured_min": 29,
+      "measured_max": 272,
+      "measured_median": 83,
+      "tolerance": 20.0
+    },
+    "sentinel_pathbuf": {
+      "spec_value": 24,
+      "measured": 24,
+      "tolerance": 0
+    },
+    "proto_field_numbers": {
+      "spec_value": 1,
+      "measured": 1,
+      "tolerance": 0
+    },
+    "event_loop_block_ceiling": {
+      "spec_value": 100,
+      "measured_avg": 0.0333972,
+      "measured_max": 0.068387,
+      "tolerance": 10.0
+    },
+    "table_build_ceiling": {
+      "spec_value": 50,
+      "measured_avg": 0.060712600000000005,
+      "measured_max": 0.061711,
+      "tolerance": 5.0
+    },
+    "playlist_render_latency": {
+      "spec_value": 200,
+      "measured_avg": 0.09410980000000001,
+      "measured_max": 0.130098,
+      "tolerance": 20.0
+    }
+  },
+  "all_pass": true,
+  "representative_tracks_count": 10,
+  "timing_samples": 5
+}

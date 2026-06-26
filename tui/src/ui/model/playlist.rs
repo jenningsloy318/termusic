@@ -20,6 +20,17 @@ pub struct TUIPlaylist {
 }
 
 impl TUIPlaylist {
+    /// Insert a pre-constructed Track at a specific index without disk I/O.
+    /// If the index >= len, the track is appended at the end.
+    #[allow(dead_code)] // Used in Phase 3 (TUI playlist loading rewrite)
+    pub fn insert_track_at(&mut self, index: usize, track: Track) {
+        if index >= self.tracks.len() {
+            self.tracks.push(track);
+        } else {
+            self.tracks.insert(index, track);
+        }
+    }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.tracks.is_empty()

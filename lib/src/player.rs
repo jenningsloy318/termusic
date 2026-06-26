@@ -338,9 +338,12 @@ pub struct PlaylistAddTrackInfo {
     /// If this is not at the end, all tracks at this index and beyond should be shifted.
     pub at_index: u64,
     pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
     /// Duration of the track
     pub duration: PlayerTimeUnit,
     pub trackid: playlist_helpers::PlaylistTrackSource,
+    pub has_local_file: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -401,6 +404,13 @@ impl From<UpdatePlaylistEvents> for protobuf::UpdatePlaylist {
                         .map(protobuf::playlist_add_track::OptionalTitle::Title),
                     duration: Some(vals.duration.into()),
                     id: Some(vals.trackid.into()),
+                    artist: vals.artist,
+                    album: vals.album,
+                    has_local_file: if vals.has_local_file {
+                        Some(true)
+                    } else {
+                        None
+                    },
                 })
             }
             UpdatePlaylistEvents::PlaylistRemoveTrack(vals) => {
@@ -444,12 +454,15 @@ impl TryFrom<protobuf::UpdatePlaylist> for UpdatePlaylistEvents {
                     let protobuf::playlist_add_track::OptionalTitle::Title(v) = v;
                     v
                 }),
+                artist: ev.artist,
+                album: ev.album,
                 duration: unwrap_msg(ev.duration, "UpdatePlaylist.type.add_track.duration")?.into(),
                 trackid: unwrap_msg(
                     unwrap_msg(ev.id, "UpdatePlaylist.type.add_track.id")?.source,
                     "UpdatePlaylist.type.add_track.id.source",
                 )?
                 .try_into()?,
+                has_local_file: ev.has_local_file.unwrap_or(false),
             }),
             PPlaylistTypes::RemoveTrack(ev) => Self::PlaylistRemoveTrack(PlaylistRemoveTrackInfo {
                 at_index: ev.at_index,

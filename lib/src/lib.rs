@@ -34,6 +34,9 @@ mod player_playlist_add_track_tests;
 mod player_phase2_tests;
 
 #[cfg(test)]
+mod async_tui_phase1_tests;
+
+#[cfg(test)]
 mod tests {
     use std::{ffi::OsStr, path::PathBuf};
 
