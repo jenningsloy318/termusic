@@ -1,0 +1,49 @@
+{
+  "$schema": "Super Dev Workflow Tracking",
+  "featureName": "Async Server Metadata Loading",
+  "specDirectory": "specification/04-async-server-metadata-loading",
+  "worktreePath": "/home/jenningsl/development/osc/terminals/termusic/.worktree/04-async-server-metadata-loading",
+  "startedAt": null,
+  "stages": [
+    { "id": 1, "name": "spec-setup", "status": "complete", "startedAt": null, "completedAt": "2026-06-26T06:05:19Z", "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 2, "name": "requirements-bdd", "status": "complete", "startedAt": "2026-06-26T06:05:43Z", "completedAt": "2026-06-26T06:15:31Z", "docs": ["01-requirements.md","02-bdd-scenarios.md"], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 3, "name": "research", "status": "complete", "startedAt": "2026-06-26T06:15:51Z", "completedAt": "2026-06-26T06:58:47Z", "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 4, "name": "bug-analysis", "status": "complete", "startedAt": "2026-06-26T06:58:47Z", "completedAt": "2026-06-26T07:06:51Z", "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 5, "name": "specification", "status": "complete", "startedAt": "2026-06-26T06:59:24Z", "completedAt": "2026-06-26T07:07:12Z", "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 6, "name": "design", "status": "skipped", "startedAt": "2026-06-26T07:07:12Z", "completedAt": "2026-06-26T07:07:55Z", "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 7, "name": "implementation-plan", "status": "complete", "startedAt": "2026-06-26T07:08:00Z", "completedAt": "2026-06-26T07:15:49Z", "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 8, "name": "task-list", "status": "complete", "startedAt": "2026-06-26T07:16:00Z", "completedAt": "2026-06-26T07:16:45Z", "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 9, "name": "implementation", "status": "in_progress", "startedAt": "2026-06-26T07:17:00Z", "completedAt": null, "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 10, "name": "review", "status": "pending", "startedAt": null, "completedAt": null, "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 11, "name": "integration-testing", "status": "pending", "startedAt": null, "completedAt": null, "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 12, "name": "final-validation", "status": "pending", "startedAt": null, "completedAt": null, "docs": [], "files": { "created": [], "modified": [], "deleted": [] } },
+    { "id": 13, "name": "commit", "status": "pending", "startedAt": null, "completedAt": null, "docs": [], "files": { "created": [], "modified": [], "deleted": [] } }
+  ],
+  "implementationPhases": [
+    {
+      "phaseNumber": 1,
+      "name": "Foundation and Type Definitions",
+      "status": "in_progress",
+      "startedAt": "2026-06-26T07:24:55Z",
+      "completedAt": null,
+      "reviewIterations": 0
+    }
+  ],
+  "tasks": [],
+  "iteration": {
+    "currentPhase": 1,
+    "totalPhases": 4,
+    "loops": 0,
+    "lastReviewVerdict": null
+  },
+  "team": {
+    "name": "super-dev-async-server-metadata-loading",
+    "teammates": [],
+    "messages": []
+  },
+  "status": {
+    "allStagesComplete": false,
+    "allTasksComplete": false,
+    "workflowDone": false
+  }
+}

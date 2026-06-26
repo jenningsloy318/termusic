@@ -1,6 +1,7 @@
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
@@ -11,13 +12,14 @@ use termusiclib::config::v2::server::config_extra::ServerConfigVersionedDefaulte
 use termusiclib::config::v2::server::{ComProtocol, ScanDepth, StartupState};
 use termusiclib::config::{ServerOverlay, SharedServerSettings, new_shared_server_settings};
 use termusiclib::player::music_player_server::MusicPlayerServer;
-use termusiclib::player::{GetProgressResponse, PlayerProgress, PlayerTime, RunningStatus};
+use termusiclib::player::{
+    GetProgressResponse, PlayerProgress, PlayerTime, RunningStatus,
+};
 use termusiclib::track::{MediaTypesSimple, Track};
 use termusiclib::{podcast, utils};
 use termusicplayback::{
     Backend, BackendSelect, GeneralPlayer, PlayerCmd, PlayerCmdReciever, PlayerCmdSender,
-    PlayerErrorType, PlayerTrait, Playlist, RunInfo, SharedPlaylist, SharedRunInfo, SpeedSigned,
-    VolumeSigned, quit_sources,
+    PlayerErrorType, PlayerTrait, Playlist, RunInfo, SharedPlaylist, SharedRunInfo, SpeedSigned, VolumeSigned, quit_sources,
 };
 use tokio::runtime::Handle;
 use tokio::select;
@@ -42,6 +44,10 @@ mod podcast_sync_phase4_tests;
 mod podcast_sync_phase5_tests;
 #[cfg(test)]
 mod podcast_sync_scenario011_tests;
+#[cfg(test)]
+mod async_loading_phase1_tests;
+#[cfg(test)]
+mod async_loading_phase34_tests;
 
 #[macro_use]
 extern crate log;
@@ -52,6 +58,10 @@ pub const SPEED_STEP: SpeedSigned = 1;
 
 /// The Limit of continues errors before stopping playback and awaiting user input to start something specific again.
 const BACKEND_ERROR_LIMIT: NonZeroUsize = NonZeroUsize::new(5).unwrap();
+
+/// Type alias for the shared loading-state flag.
+/// `true` = loading in progress; `false` = loading complete (or not started for empty playlists).
+pub type PlaylistLoadingFlag = Arc<AtomicBool>;
 
 /// Stats for the music player responses
 #[derive(Debug, Clone, PartialEq)]
@@ -760,6 +770,9 @@ fn player_loop(
                     }
                 });
             }
+            PlayerCmd::PlaylistLoadComplete => {
+                /* Phase 3: auto-play logic */
+            }
             PlayerCmd::MetadataChanged => {
                 trace!("Metadata changed");
                 if let Some(track) = player.run_info.read().current_track() {
@@ -916,4 +929,129 @@ async fn execute_action(action: cli::Action, config: &ServerOverlay) -> Result<(
     };
 
     Ok(())
+}
+
+/// Complete the background playlist load by committing data and notifying consumers.
+///
+/// # Ordering Invariant
+///
+/// These steps MUST execute in this exact order:
+/// 1. Write-lock swap: populate the shared playlist with loaded data.
+///    Dropping the write guard provides Release semantics.
+/// 2. AtomicBool store(false, Release): signals that loading is complete.
+///    Any thread reading Acquire on this bool is guaranteed to see step 1's data.
+/// 3. Send PlaylistShuffled event via stream_tx: notifies connected TUI clients.
+///    Must come after step 1 so clients see populated data on GetPlaylist.
+/// 4. Send PlayerCmd::PlaylistLoadComplete via cmd_tx: triggers auto-play if configured.
+///    Must come after step 1 so player_loop finds tracks in the playlist.
+pub fn complete_background_load(
+    playlist: &SharedPlaylist,
+    playlist_is_loading: &PlaylistLoadingFlag,
+    stream_tx: &termusicplayback::StreamTX,
+    cmd_tx: &PlayerCmdSender,
+    loaded_index: usize,
+    loaded_tracks: Vec<Track>,
+) {
+    use std::sync::atomic::Ordering;
+    use termusiclib::player::{PlaylistShuffledInfo, UpdateEvents, UpdatePlaylistEvents};
+
+    // Step 1: Write-lock swap — populate the shared playlist with loaded data.
+    let grpc_tracks = {
+        let mut write_guard = playlist.write();
+        write_guard.apply_loaded_data(loaded_index, loaded_tracks);
+        // Build the gRPC playlist representation while we still hold the lock.
+        let grpc_tracks = write_guard.as_grpc_playlist_tracks();
+        // Dropping write guard provides Release semantics for the RwLock.
+        drop(write_guard);
+        grpc_tracks
+    };
+
+    // Step 2: AtomicBool store(false, Release) — signals loading is complete.
+    playlist_is_loading.store(false, Ordering::Release);
+
+    // Step 3: Send PlaylistShuffled event via stream_tx — notifies connected TUI clients.
+    match grpc_tracks {
+        Ok(tracks) => {
+            let event = UpdateEvents::PlaylistChanged(
+                UpdatePlaylistEvents::PlaylistShuffled(PlaylistShuffledInfo { tracks }),
+            );
+            if stream_tx.send(event).is_err() {
+                warn!("Stream Event not sent after background load: No Receivers");
+            }
+        }
+        Err(err) => {
+            warn!("Failed to serialize playlist tracks for stream event: {err:#}");
+        }
+    }
+
+    // Step 4: Send PlayerCmd::PlaylistLoadComplete via cmd_tx — triggers auto-play.
+    if let Err(err) = cmd_tx.send(PlayerCmd::PlaylistLoadComplete) {
+        warn!("Failed to send PlaylistLoadComplete command: {err}");
+    }
+}
+
+/// Spawn background metadata loading on PLAYLIST_POOL.
+///
+/// Creates a tokio task that:
+/// 1. Calls Playlist::load() via spawn_blocking on the dedicated thread pool
+/// 2. On success: invokes complete_background_load() to commit data and notify consumers
+/// 3. On failure: logs the error and clears the loading flag
+/// 4. Respects CancellationToken for clean shutdown
+pub fn start_background_playlist_load(
+    handle: Handle,
+    cancel_token: CancellationToken,
+    playlist: SharedPlaylist,
+    playlist_is_loading: PlaylistLoadingFlag,
+    stream_tx: termusicplayback::StreamTX,
+    cmd_tx: PlayerCmdSender,
+    _config: SharedServerSettings,
+) {
+    use std::sync::atomic::Ordering;
+
+    handle.spawn(async move {
+        info!("Starting background playlist metadata loading");
+        let load_start = std::time::Instant::now();
+
+        let load_result = tokio::select! {
+            result = tokio::task::spawn_blocking(Playlist::load) => {
+                Some(result)
+            }
+            _ = cancel_token.cancelled() => {
+                info!("Background playlist load cancelled (shutdown)");
+                None
+            }
+        };
+
+        let Some(join_result) = load_result else {
+            // Cancelled — exit without committing
+            return;
+        };
+
+        match join_result {
+            Ok(Ok((loaded_index, loaded_tracks))) => {
+                let track_count = loaded_tracks.len();
+                let elapsed = load_start.elapsed();
+                info!(
+                    "Background playlist load complete: {track_count} tracks loaded in {}ms",
+                    elapsed.as_millis()
+                );
+                complete_background_load(
+                    &playlist,
+                    &playlist_is_loading,
+                    &stream_tx,
+                    &cmd_tx,
+                    loaded_index,
+                    loaded_tracks,
+                );
+            }
+            Ok(Err(load_error)) => {
+                error!("Background playlist load failed: {load_error:#}");
+                playlist_is_loading.store(false, Ordering::Release);
+            }
+            Err(join_error) => {
+                error!("Background playlist load panicked: {join_error}");
+                playlist_is_loading.store(false, Ordering::Release);
+            }
+        }
+    });
 }
