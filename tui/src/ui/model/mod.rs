@@ -45,6 +45,8 @@ mod view;
 pub mod youtube_options;
 
 #[cfg(test)]
+mod async_tui_loading_tests;
+#[cfg(test)]
 mod async_tui_phase1_playlist_tests;
 #[cfg(test)]
 mod async_tui_phase3_tests;
@@ -104,6 +106,15 @@ pub struct ConfigEditorData {
     pub key_config: Keys,
     /// Indicator to prompt a save on config editor exit
     pub config_changed: bool,
+}
+
+/// Statistics returned by [`Playback::load_from_grpc`] for observability.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoadStats {
+    /// Number of tracks successfully loaded.
+    pub track_count: usize,
+    /// Wall-clock time spent processing the playlist data.
+    pub elapsed: Duration,
 }
 
 /// Information about the playback status
@@ -185,16 +196,23 @@ impl Playback {
     /// Constructs Track objects from server-provided metadata via
     /// [`Track::from_grpc_metadata`] without any filesystem access.
     ///
+    /// Returns [`LoadStats`] with the number of tracks loaded and elapsed time.
+    ///
     /// # Errors
     ///
     /// - when converting from u64 grpc values to usize fails
     /// - when there is no track-id
-    pub fn load_from_grpc(&mut self, info: PlaylistTracks) -> anyhow::Result<()> {
+    pub fn load_from_grpc(&mut self, info: PlaylistTracks) -> anyhow::Result<LoadStats> {
+        use std::time::Instant;
+
         use termusiclib::player::playlist_add_track::OptionalTitle;
+
+        let start = Instant::now();
+        let track_count = info.tracks.len();
 
         let current_track_index = usize::try_from(info.current_track_index)
             .context("convert current_track_index(u64) to usize")?;
-        let mut playlist_items = Vec::with_capacity(info.tracks.len());
+        let mut playlist_items = Vec::with_capacity(track_count);
 
         for (idx, proto_track) in info.tracks.into_iter().enumerate() {
             let at_index_usize =
@@ -234,7 +252,12 @@ impl Playback {
 
         self.set_current_track_from_playlist();
 
-        Ok(())
+        let elapsed = start.elapsed();
+
+        Ok(LoadStats {
+            track_count,
+            elapsed,
+        })
     }
 }
 
