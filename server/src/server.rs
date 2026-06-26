@@ -193,6 +193,7 @@ async fn actual_main() -> Result<()> {
     let cancel_token = service_cancel_token.clone();
     let playlist_c = playlist.clone();
     let playlist_is_loading: PlaylistLoadingFlag = Arc::new(AtomicBool::new(true));
+    let playlist_is_loading_for_quit = playlist_is_loading.clone();
     start_playlist_save_interval(
         tokio_handle.clone(),
         cancel_token,
@@ -240,6 +241,7 @@ async fn actual_main() -> Result<()> {
                 playlist,
                 run_info,
                 active_connections_data,
+                playlist_is_loading_for_quit,
             );
             let _ = player_handle_os_tx.send(res);
         })?;
@@ -363,6 +365,7 @@ fn player_loop(
     playlist: SharedPlaylist,
     run_info: SharedRunInfo,
     active_connections_data: ActiveConnections,
+    playlist_is_loading: PlaylistLoadingFlag,
 ) -> Result<()> {
     let mut player =
         GeneralPlayer::new_backend(backend, config, cmd_tx, stream_tx, playlist, run_info)?;
@@ -404,9 +407,13 @@ fn player_loop(
                     // to have a consistent last position
                     player.pause();
                     player.player_save_last_position();
-                    if let Err(e) = player.playlist.write().save() {
+                    // Skip playlist save if background loading is still in progress (AC-07)
+                    // to avoid truncating the user's playlist.log with an empty/partial playlist.
+                    if playlist_is_loading.load(std::sync::atomic::Ordering::Acquire) {
+                        info!("Skipping playlist save on quit: background loading in progress");
+                    } else if let Err(e) = player.playlist.write().save() {
                         error!("error when saving playlist: {e}");
-                    };
+                    }
                     // clear out all currently queued rodio sources
                     // without this, on rusty backend, may keep the process around until the last source has been consumed
                     player.stop();
