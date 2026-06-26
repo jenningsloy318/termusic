@@ -26,8 +26,8 @@ use termusiclib::track::Track;
 // Import the internal test helpers that Phase 2 should expose.
 // These are the testable extraction of the classify-then-merge logic.
 use termusicplayback::playlist::parallel_load::{
-    classify_playlist_lines, collect_and_filter_lines, merge_indexed_tracks,
-    parallel_read_local_tracks, ClassifiedLines,
+    ClassifiedLines, classify_playlist_lines, collect_and_filter_lines, merge_indexed_tracks,
+    parallel_read_local_tracks,
 };
 
 // =============================================================================

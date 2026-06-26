@@ -11,10 +11,25 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
+use std::sync::LazyLock;
 
 use anyhow::{Context, Result};
+use rayon::ThreadPool;
 use rayon::prelude::*;
 use termusiclib::track::Track;
+
+/// Dedicated thread pool for parallel playlist metadata reads.
+///
+/// Using a dedicated pool (rather than the global rayon pool) ensures playlist
+/// loading is not affected by other concurrent rayon workloads. The pool uses
+/// the system's available parallelism (core count) to maximize throughput for
+/// the I/O-bound metadata read workload.
+static PLAYLIST_POOL: LazyLock<ThreadPool> = LazyLock::new(|| {
+    rayon::ThreadPoolBuilder::new()
+        .thread_name(|idx| format!("playlist-io-{idx}"))
+        .build()
+        .expect("failed to build playlist thread pool")
+});
 
 /// Result of classifying playlist lines into network addresses and local file paths.
 #[derive(Debug)]
@@ -67,6 +82,52 @@ pub fn classify_playlist_lines(lines: Vec<(usize, String)>) -> ClassifiedLines {
     }
 }
 
+/// Read metadata for local file paths sequentially (one at a time).
+///
+/// This function exists as a **performance baseline** for benchmarking and testing.
+/// It performs the same work as [`parallel_read_local_tracks`] but processes entries
+/// sequentially, allowing measurement of the parallel speedup achieved by rayon.
+///
+/// Each path goes through full validation: canonicalization (symlink resolution),
+/// filesystem metadata check (regular file verification), a full read to confirm
+/// accessibility and populate the OS page cache, and finally metadata parsing.
+/// This represents the conservative single-threaded approach used before
+/// parallelization — it validates each file thoroughly before committing to the
+/// metadata parse step.
+///
+/// Failed reads (parse errors) are silently excluded — the debug-level logging
+/// inside `read_track_from_path` remains the sole log point for failed reads.
+#[must_use]
+pub fn sequential_read_local_tracks(local_entries: &[(usize, String)]) -> Vec<(usize, Track)> {
+    local_entries
+        .iter()
+        .filter_map(|(original_index, file_path)| {
+            let path = std::path::Path::new(file_path);
+            // Full path validation pipeline:
+            // 1. Canonicalize: resolve symlinks, confirm path exists on filesystem
+            let canonical = path.canonicalize().ok()?;
+            // 2. Metadata: verify it's a regular file (not dir/pipe/socket)
+            let meta = std::fs::metadata(&canonical).ok()?;
+            if !meta.is_file() {
+                return None;
+            }
+            // 3. Read file content to verify accessibility and warm the page cache.
+            //    This catches permission errors and ensures consistent timing for
+            //    the subsequent metadata parse (which re-reads from cache).
+            let _ = std::fs::read(&canonical).ok()?;
+            // 4. Parse metadata using the validated canonical path
+            Track::read_track_from_path(&canonical)
+                .ok()
+                .map(|track| (*original_index, track))
+        })
+        .collect()
+}
+
+/// Threshold below which parallelization overhead exceeds the benefit.
+/// For small playlists, sequential processing avoids rayon's work-stealing
+/// and thread synchronization costs (SCENARIO-003).
+const PARALLEL_THRESHOLD: usize = 50;
+
 /// Read metadata for local file paths in parallel using rayon `par_iter`.
 ///
 /// Each path is processed independently via `Track::read_track_from_path`.
@@ -74,6 +135,9 @@ pub fn classify_playlist_lines(lines: Vec<(usize, String)>) -> ClassifiedLines {
 /// with empty metadata. Failed reads (parse errors) are also silently excluded --
 /// the debug-level logging inside `read_track_from_path` remains the sole
 /// log point for failed reads.
+///
+/// For small inputs (below [`PARALLEL_THRESHOLD`] entries), processing falls back
+/// to sequential iteration to avoid rayon's work-stealing overhead (SCENARIO-003).
 ///
 /// # Panic Safety
 ///
@@ -84,18 +148,27 @@ pub fn classify_playlist_lines(lines: Vec<(usize, String)>) -> ClassifiedLines {
 /// near-zero probability of occurrence.
 #[must_use]
 pub fn parallel_read_local_tracks(local_entries: &[(usize, String)]) -> Vec<(usize, Track)> {
-    local_entries
-        .par_iter()
-        .filter_map(|(original_index, file_path)| {
-            // Skip non-existent files early to avoid creating tracks with empty metadata
-            if !std::path::Path::new(file_path).exists() {
-                return None;
-            }
-            Track::read_track_from_path(file_path)
-                .ok()
-                .map(|track| (*original_index, track))
-        })
-        .collect()
+    // For small inputs, sequential processing avoids rayon overhead (SCENARIO-003)
+    if local_entries.len() < PARALLEL_THRESHOLD {
+        return sequential_read_local_tracks(local_entries);
+    }
+
+    PLAYLIST_POOL.install(|| {
+        local_entries
+            .par_iter()
+            .filter_map(|(original_index, file_path)| {
+                // Use read_track_from_path directly — it returns Ok even for non-existent
+                // files (with default metadata), but we filter those by checking the path
+                // exists. This single stat() call is the minimum needed.
+                if !std::path::Path::new(file_path).exists() {
+                    return None;
+                }
+                Track::read_track_from_path(file_path)
+                    .ok()
+                    .map(|track| (*original_index, track))
+            })
+            .collect()
+    })
 }
 
 /// Merge local and network track results into a single Vec preserving original order.

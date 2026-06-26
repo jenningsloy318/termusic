@@ -76,3 +76,7 @@ workspace = true
 [[bench]]
 name = "async_ring"
 harness = false
+
+[[bench]]
+name = "playlist_load_bench"
+harness = false
