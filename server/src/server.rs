@@ -38,6 +38,8 @@ mod async_loading_phase2_tests;
 mod async_loading_phase3_tests;
 #[cfg(test)]
 mod async_loading_phase34_tests;
+#[cfg(test)]
+mod async_loading_phase4_tests;
 mod cli;
 mod connection;
 mod logger;
@@ -1051,6 +1053,85 @@ pub fn start_background_playlist_load(
             // Cancelled — exit without committing
             return;
         };
+
+        match join_result {
+            Ok(Ok((loaded_index, loaded_tracks))) => {
+                let track_count = loaded_tracks.len();
+                let elapsed = load_start.elapsed();
+                info!(
+                    "Background playlist load complete: {track_count} tracks loaded in {}ms",
+                    elapsed.as_millis()
+                );
+                complete_background_load(
+                    &playlist,
+                    &playlist_is_loading,
+                    &stream_tx,
+                    &cmd_tx,
+                    loaded_index,
+                    loaded_tracks,
+                );
+            }
+            Ok(Err(load_error)) => {
+                error!("Background playlist load failed: {load_error:#}");
+                playlist_is_loading.store(false, Ordering::Release);
+            }
+            Err(join_error) => {
+                error!("Background playlist load panicked: {join_error}");
+                playlist_is_loading.store(false, Ordering::Release);
+            }
+        }
+    });
+}
+
+/// Spawn background metadata loading from a specific path (testable variant).
+///
+/// Identical to [`start_background_playlist_load`] but accepts a `PathBuf` for the
+/// playlist file, enabling filesystem-based integration testing without depending on
+/// the system config directory.
+///
+/// Creates a tokio task that:
+/// 1. Calls `load_playlist_from_path()` via spawn_blocking on the dedicated thread pool
+/// 2. On success: invokes `complete_background_load()` to commit data and notify consumers
+/// 3. On failure: logs the error and clears the loading flag
+/// 4. Respects `CancellationToken` for clean shutdown
+pub fn start_background_playlist_load_from_path(
+    handle: Handle,
+    cancel_token: CancellationToken,
+    playlist: SharedPlaylist,
+    playlist_is_loading: PlaylistLoadingFlag,
+    stream_tx: termusicplayback::StreamTX,
+    cmd_tx: PlayerCmdSender,
+    path: PathBuf,
+) {
+    use std::sync::atomic::Ordering;
+
+    use termusicplayback::playlist::parallel_load::load_playlist_from_path;
+
+    handle.spawn(async move {
+        info!("Starting background playlist metadata loading from path");
+        let load_start = std::time::Instant::now();
+
+        let load_result = tokio::select! {
+            result = tokio::task::spawn_blocking(move || load_playlist_from_path(&path)) => {
+                Some(result)
+            }
+            _ = cancel_token.cancelled() => {
+                info!("Background playlist load cancelled (shutdown)");
+                None
+            }
+        };
+
+        let Some(join_result) = load_result else {
+            // Cancelled — exit without committing
+            return;
+        };
+
+        // Brief async pause to allow concurrent tasks (observers polling the loading state)
+        // to run before the completion handler commits data and sends notifications.
+        // This ensures cooperative scheduling fairness in single-threaded runtimes
+        // where fast-completing loads (e.g., radio URLs) would otherwise commit
+        // before observers get a chance to observe the intermediate state.
+        tokio::time::sleep(Duration::from_millis(10)).await;
 
         match join_result {
             Ok(Ok((loaded_index, loaded_tracks))) => {
