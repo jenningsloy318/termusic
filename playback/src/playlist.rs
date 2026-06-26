@@ -215,6 +215,14 @@ impl Playlist {
         let podcasts = db_podcast
             .get_podcasts()
             .with_context(|| "failed to get podcasts from db.")?;
+
+        // Build a URL→Episode index for O(1) podcast episode lookup
+        let episode_by_url: std::collections::HashMap<&str, &termusiclib::podcast::episode::Episode> =
+            podcasts
+                .iter()
+                .flat_map(|pod| pod.episodes.iter().map(|ep| (ep.url.as_str(), ep)))
+                .collect();
+
         for line in lines {
             let line = line?;
 
@@ -227,18 +235,10 @@ impl Playlist {
             }
 
             if line.starts_with("http") {
-                let mut is_podcast = false;
-                'outer: for pod in &podcasts {
-                    for ep in &pod.episodes {
-                        if ep.url == line.as_str() {
-                            is_podcast = true;
-                            let track = Track::from_podcast_episode(ep);
-                            playlist_items.push(track);
-                            break 'outer;
-                        }
-                    }
-                }
-                if !is_podcast {
+                if let Some(ep) = episode_by_url.get(line.as_str()) {
+                    let track = Track::from_podcast_episode(ep);
+                    playlist_items.push(track);
+                } else {
                     let track = Track::new_radio(&line);
                     playlist_items.push(track);
                 }
