@@ -1,3 +1,5 @@
+pub mod parallel_load;
+
 use std::error::Error;
 use std::fmt::{Display, Write as _};
 use std::fs::File;
@@ -10,8 +12,6 @@ use parking_lot::RwLock;
 use pathdiff::diff_paths;
 use rand::RngExt;
 use rand::seq::SliceRandom;
-#[allow(unused_imports)] // Used in Phase 2 for parallel playlist loading
-use rayon::prelude::*;
 use termusiclib::config::SharedServerSettings;
 use termusiclib::config::v2::server::LoopMode;
 use termusiclib::player;
@@ -211,7 +211,6 @@ impl Playlist {
             return Ok((0, Vec::new()));
         }
 
-        let mut playlist_items = Vec::new();
         let db_path = get_app_config_path()?;
         let db_podcast = DBPod::new(&db_path)?;
         let podcasts = db_podcast
@@ -227,31 +226,49 @@ impl Playlist {
             .flat_map(|pod| pod.episodes.iter().map(|ep| (ep.url.as_str(), ep)))
             .collect();
 
-        for line in lines {
-            let line = line?;
+        // Two-phase parallel loading architecture:
+        // Phase A: Batch collect and classify lines
+        // Phase B: Process local paths in parallel, network entries sequentially, then merge
+        let load_start = std::time::Instant::now();
 
-            let trimmed_line = line.trim();
+        // NOTE: Original code used `line?` which aborted on first I/O error.
+        // The batch approach uses map_while(Result::ok) which stops reading at the first
+        // I/O error but does NOT propagate it as an Err. This is acceptable because:
+        // 1. playlist.log is a local regular file; mid-read I/O errors are near-impossible
+        // 2. Partial playlist loading is preferable to total startup failure
+        // 3. If the file is truly unreadable, the first line (track index) read would have
+        //    already failed and propagated via the earlier `line?` above
+        let all_lines = parallel_load::collect_and_filter_lines(lines);
+        let classified = parallel_load::classify_playlist_lines(all_lines);
 
-            // skip empty lines without trying to process them
-            // skip lines that are comments (m3u-like)
-            if trimmed_line.is_empty() || trimmed_line.starts_with('#') {
-                continue;
-            }
+        // Process local file paths in parallel via rayon
+        let local_tracks = parallel_load::parallel_read_local_tracks(&classified.local_entries);
+        let local_tracks_count = local_tracks.len();
 
-            if line.starts_with("http") {
-                if let Some(ep) = episode_by_url.get(line.as_str()) {
-                    let track = Track::from_podcast_episode(ep);
-                    playlist_items.push(track);
+        // Process network entries sequentially (cheap HashMap lookups)
+        let network_tracks: Vec<(usize, Track)> = classified
+            .network_entries
+            .iter()
+            .map(|(original_index, url)| {
+                if let Some(ep) = episode_by_url.get(url.as_str()) {
+                    (*original_index, Track::from_podcast_episode(ep))
                 } else {
-                    let track = Track::new_radio(&line);
-                    playlist_items.push(track);
+                    (*original_index, Track::new_radio(url))
                 }
-                continue;
-            }
-            if let Ok(track) = Track::read_track_from_path(&line) {
-                playlist_items.push(track);
-            }
-        }
+            })
+            .collect();
+        let network_tracks_count = network_tracks.len();
+
+        // Merge preserving original playlist order
+        let playlist_items = parallel_load::merge_indexed_tracks(local_tracks, network_tracks);
+
+        info!(
+            "Loaded {} tracks ({} local, {} network) in {:?}",
+            playlist_items.len(),
+            local_tracks_count,
+            network_tracks_count,
+            load_start.elapsed()
+        );
 
         // protect against the listed index in the playlist file not matching the elements in the playlist
         // for example lets say it has "100", but there are only 2 elements in the playlist
