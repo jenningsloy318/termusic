@@ -10,6 +10,8 @@ use parking_lot::RwLock;
 use pathdiff::diff_paths;
 use rand::RngExt;
 use rand::seq::SliceRandom;
+#[allow(unused_imports)] // Used in Phase 2 for parallel playlist loading
+use rayon::prelude::*;
 use termusiclib::config::SharedServerSettings;
 use termusiclib::config::v2::server::LoopMode;
 use termusiclib::player;
@@ -217,11 +219,13 @@ impl Playlist {
             .with_context(|| "failed to get podcasts from db.")?;
 
         // Build a URL→Episode index for O(1) podcast episode lookup
-        let episode_by_url: std::collections::HashMap<&str, &termusiclib::podcast::episode::Episode> =
-            podcasts
-                .iter()
-                .flat_map(|pod| pod.episodes.iter().map(|ep| (ep.url.as_str(), ep)))
-                .collect();
+        let episode_by_url: std::collections::HashMap<
+            &str,
+            &termusiclib::podcast::episode::Episode,
+        > = podcasts
+            .iter()
+            .flat_map(|pod| pod.episodes.iter().map(|ep| (ep.url.as_str(), ep)))
+            .collect();
 
         for line in lines {
             let line = line?;

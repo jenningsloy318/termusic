@@ -5464,6 +5464,7 @@ dependencies = [
  "pathdiff",
  "pretty_assertions",
  "rand 0.10.1",
+ "rayon",
  "reqwest",
  "rodio",
  "soundtouch",
