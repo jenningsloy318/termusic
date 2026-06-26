@@ -482,18 +482,63 @@ The testing approach verifies both correctness (metadata flows through the proto
   - Likelihood: low
   - Impact: medium
   - Mitigation: Mark `track_from_path` and `track_from_podcasturi` as deprecated after migration. Add a compile-time warning. Remove if no callers remain after Phase 3.
+  - **Resolution**: Risk eliminated. Methods were fully removed in Phase 3 (commit e96975a9) after confirming zero remaining callers. No disk I/O path remains in TUI playlist loading.
 
 - **Risk**: Proto schema change breaks wire format if field numbers conflict
   - Likelihood: none (validated by prototype)
   - Impact: high
   - Mitigation: Existing fields use numbers 1-4. New fields use 5, 6, 7. Verified no conflicts. Proto3 optional semantics ensure forward/backward compatibility.
+  - **Resolution**: Risk confirmed non-existent. Proto compiles cleanly with new fields.
 
 - **Risk**: Server sends empty title for tracks with valid metadata (regression in serialization logic)
   - Likelihood: low
   - Impact: medium
   - Mitigation: Unit tests verify server populates title from Track::title(). Integration tests verify round-trip from server Track to TUI display.
+  - **Resolution**: Validated by 38 integration tests in Phase 4 covering all metadata paths.
 
 - **Risk**: Performance regression in server serialization (copying strings for 1000+ tracks)
   - Likelihood: none (validated by prototype)
   - Impact: low
   - Mitigation: String copies from in-memory data are sub-millisecond for 1000 tracks. Measured overhead is negligible.
+  - **Resolution**: Performance tests confirm sub-1ms for 1000 tracks, well under 100ms ceiling.
+
+---
+
+## 9. Implementation Deviations
+
+The following deviations from the original specification were identified during implementation and code review.
+
+### 9.1. load_from_grpc Return Type Changed to LoadStats
+
+- **Original Spec (Section 5.3)**: `load_from_grpc` returns `anyhow::Result<()>`
+- **Actual**: `load_from_grpc` returns `anyhow::Result<LoadStats>` where `LoadStats { track_count: usize, elapsed: Duration }`
+- **Reason**: Section 7.3 requires observability logging ("Processed {count} tracks in {elapsed_ms}ms"). Returning timing data to the caller enables both logging and programmatic test assertions without embedding logging framework calls inside the function.
+- **Impact**: Minor. Callers that use `?` or `if let Err` continue to work without modification. LoadStats enables future INFO-level logging at call sites.
+
+### 9.2. Dead Code Removal Instead of Deprecation
+
+- **Original Spec (Section 5.4, Risk #2)**: Suggested deprecating `track_from_path` and `track_from_podcasturi` after migration.
+- **Actual**: Methods were fully removed (not deprecated) along with the `add_tracks` method.
+- **Reason**: After confirming zero remaining callers in Phase 3, deprecation would leave dead code with no path to removal. Full deletion is cleaner.
+- **Impact**: None. No external consumers exist (crate is internal).
+
+### 9.3. T-23 Completed During Phase 1
+
+- **Original Plan**: T-23 (stream event metadata population) was scheduled for Phase 2.
+- **Actual**: Completed during Phase 1's T-08 because adding fields to `PlaylistAddTrackInfo` struct required updating all construction sites to compile.
+- **Reason**: Rust's exhaustive struct initialization pattern means new required fields must be populated at all construction sites simultaneously.
+- **Impact**: None. Phase 2 scope was slightly smaller; correctness unaffected.
+
+### 9.4. has_local_file Serialization Asymmetry
+
+- **Original Spec**: Did not specify serialization behavior distinction between bulk and stream paths.
+- **Actual**: In stream events (`From<UpdatePlaylistEvents>`), `has_local_file: false` serializes to `None` (omitted). In bulk responses (`as_grpc_playlist_tracks`), podcast tracks without local files serialize as `Some(false)`.
+- **Reason**: Stream events use the domain struct pattern (false -> None to minimize wire overhead). Bulk response uses explicit podcast detection pattern for semantic clarity.
+- **Impact**: None. Both deserialize correctly via `unwrap_or(false)`. Identified in adversarial review (A-01, Low severity).
+
+### 9.5. LoadStats Not Yet Logged at Call Sites
+
+- **Original Spec (Section 7.3)**: "TUI logs timing of playlist response processing at INFO level"
+- **Actual**: `LoadStats` struct is computed and returned but not logged at either production call site.
+- **Reason**: Infrastructure was added during Phase 4 for testability. Logging at call sites was identified as a Low-severity finding (F-01) in code review but not blocking for approval.
+- **Impact**: Observability requirement partially unmet. The infrastructure exists; adding the log statement is a one-line change at each call site.

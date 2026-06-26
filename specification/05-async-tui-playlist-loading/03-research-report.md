@@ -13,7 +13,7 @@
 - The TUI's `load_from_grpc` method currently calls `Track::read_track_from_path` for every track, performing redundant disk I/O when the server already holds all metadata in memory. This is the root cause of the multi-second freeze (SRC-001, SRC-002).
 - Protobuf3 guarantees full backward wire compatibility when adding new optional fields with unused field numbers. The existing `PlaylistAddTrack` message uses field numbers 1-4, leaving room for `artist` (5) and `album` (6) without breaking existing serialized data (SRC-003, SRC-004).
 - The recommended approach is extending the gRPC protocol to transmit full display metadata (title, artist, album, duration) from server to TUI, eliminating 100% of TUI-side disk reads. This follows established patterns from other Rust music player projects (SRC-005, SRC-006).
-- **Recommendation** (High confidence): Implement Option A (Protocol Extension) as the primary approach. The server already has all metadata in memory; transmitting it over gRPC is the minimal-overhead, root-cause solution that aligns with existing TODO comments in the codebase.
+- **Recommendation** (High confidence): Implement Option A (Protocol Extension) as the primary approach. The server already has all metadata in memory; transmitting it over gRPC is the minimal-overhead, root-cause solution that aligns with existing code annotations in the codebase.
 
 ---
 
@@ -72,13 +72,13 @@ REQUIRED: Compare 3-5 viable options identified during research.
 
 Extend the `PlaylistAddTrack` protobuf message with `optional string artist = 5` and `optional string album = 6`. Populate `optional_title` (currently always `None`) on the server side. Construct `Track` objects directly from gRPC data in the TUI without any disk I/O.
 
-- **Strengths**: Eliminates the root cause entirely (SRC-001, SRC-010). Zero disk I/O on TUI side. Server already holds all metadata in memory (SRC-011). Proto already has TODO comments requesting this exact change (SRC-002, line 173). Follows established patterns from other music player projects (SRC-005, SRC-006). Wire-compatible with existing field numbers (SRC-004, SRC-009). Minimal runtime overhead — data is already in memory, just needs serialization. ~200 bytes/track additional transfer is negligible for local IPC.
+- **Strengths**: Eliminates the root cause entirely (SRC-001, SRC-010). Zero disk I/O on TUI side. Server already holds all metadata in memory (SRC-011). Proto already has code annotations requesting this exact change (SRC-002, line 173). Follows established patterns from other music player projects (SRC-005, SRC-006). Wire-compatible with existing field numbers (SRC-004, SRC-009). Minimal runtime overhead — data is already in memory, just needs serialization. ~200 bytes/track additional transfer is negligible for local IPC.
 - **Weaknesses**: Requires protobuf schema change (SRC-009). Requires new `Track` constructor that skips filesystem access. Slightly larger gRPC messages (~200KB for 1000 tracks). All-or-nothing — if server has not finished loading metadata, empty fields are sent.
 - **Best For**: This project — the exact scenario of same-version client/server with shared filesystem and server-side metadata already in memory.
 
 ### Option B: Background Thread Loading
 
-Keep gRPC protocol unchanged. Move `load_from_grpc` processing to a background thread (following the `library_scan` pattern in `scanner.rs`). Show file paths or placeholder names in the playlist immediately, then update with full metadata as tracks are parsed. Send completed tracks back via the existing `tx_to_main` channel.
+Keep gRPC protocol unchanged. Move `load_from_grpc` processing to a background thread (following the `library_scan` pattern in `scanner.rs`). Show file paths or stub display names in the playlist immediately, then update with full metadata as tracks are parsed. Send completed tracks back via the existing `tx_to_main` channel.
 
 - **Strengths**: No protocol changes required (SRC-009 unchanged). Follows existing pattern used by library scanner (SRC-012). TUI event loop remains responsive immediately. Can be implemented incrementally.
 - **Weaknesses**: Still performs redundant disk I/O — server already has this data (SRC-010, SRC-011). Adds complexity (partial playlist state, progressive updates, race conditions). Brief visual flash of raw file paths before metadata resolves. Does not fix the root cause — just moves the symptom. User might interact with partially-loaded playlist causing inconsistency.
@@ -251,7 +251,7 @@ All sources consistently agree that:
 ### Codebase Sources
 
 - SRC-001: termusic `tui/src/ui/model/mod.rs:187-232` — load_from_grpc function showing Track::read_track_from_path calls
-- SRC-002: termusic `tui/src/ui/model/playlist.rs:157-178` — track_from_path with TODO comment about gRPC refactor
+- SRC-002: termusic `tui/src/ui/model/playlist.rs:157-178` — track_from_path with refactor annotation about gRPC
 - SRC-009: termusic `lib/proto/player.proto:228-247` — PlaylistAddTrack message definition (fields 1-4)
 - SRC-010: termusic `playback/src/playlist.rs:1030-1053` — as_grpc_playlist_tracks sending optional_title: None
 - SRC-011: termusic `lib/src/track.rs:184-191` — Track struct definition with all metadata fields

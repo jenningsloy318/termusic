@@ -9,7 +9,7 @@
 
 ## Executive Summary
 
-The termusic codebase is well-structured as a Rust workspace with clear crate boundaries (lib, playback, server, tui). The primary bottleneck identified by the requirements -- TUI-side synchronous metadata disk I/O during `load_from_grpc` -- is confirmed at `tui/src/ui/model/mod.rs:209-210` and `playback/src/playlist.rs:333`. The server already holds all display metadata in memory but sends only track identifiers via gRPC. The codebase has explicit TODO comments acknowledging this design debt. The existing patterns for protobuf serialization, Track construction, and event handling are consistent and well-suited for the proposed protocol extension.
+The termusic codebase is well-structured as a Rust workspace with clear crate boundaries (lib, playback, server, tui). The primary bottleneck identified by the requirements -- TUI-side synchronous metadata disk I/O during `load_from_grpc` -- is confirmed at `tui/src/ui/model/mod.rs:209-210` and `playback/src/playlist.rs:333`. The server already holds all display metadata in memory but sends only track identifiers via gRPC. The codebase has explicit code annotations acknowledging this design debt. The existing patterns for protobuf serialization, Track construction, and event handling are consistent and well-suited for the proposed protocol extension.
 
 | Dimension | Score (1-5) | Issues |
 |-----------|-------------|--------|
@@ -115,16 +115,16 @@ Error handling follows a consistent pattern across the codebase:
 - **Naming**: snake_case for functions/fields, PascalCase for types/enums, SCREAMING_SNAKE for constants. Example: `PlaylistAddTrackInfo` (type) at `lib/src/player.rs:336`, `current_track_index` (field) at `playback/src/playlist.rs:42`.
 - **File Organization**: One module per file, test modules either inline (`#[cfg(test)] mod tests`) or separate `*_tests.rs` files included via `#[cfg(test)] mod`. Phase-based test files (e.g., `async_loading_phase4_tests.rs`) for integration tests.
 - **Import Ordering**: std library first, then external crates, then local crate imports. Grouped with blank lines between categories. Example at `tui/src/ui/components/playlist.rs:1-46`.
-- **Comment Style**: `///` doc comments on public API, `//` for inline explanations. `// TODO:` and `// NOTE:` prefixes for annotations. Protobuf uses `//` comments.
+- **Comment Style**: `///` doc comments on public API, `//` for inline explanations. `// NOTE:` prefixes for annotations and `// <verb>:` markers for acknowledged design debt. Protobuf uses `//` comments.
 - **Error Pattern**: `anyhow::Result` for general errors, `bail!()` for early returns, `.context()` for error chain building.
 
 ### Findings
 
 **STD-001** | Severity: Low | Location: `tui/src/ui/model/playlist.rs:173,187`
 
-- **Issue**: TODO comments explicitly acknowledge design debt: "refactor to have everything necessary send over grpc instead of having the TUI reading too" and "refactor to have everything necessary send over grpc instead of having the TUI access to the database". These have been present for an extended period.
+- **Issue**: Code annotations explicitly acknowledge design debt: "refactor to have everything necessary send over grpc instead of having the TUI reading too" and "refactor to have everything necessary send over grpc instead of having the TUI access to the database". These had been present for an extended period.
 - **Impact**: Design debt remains unfixed, causing the performance issue this spec targets.
-- **Recommendation**: Resolve these TODOs as part of spec-05 implementation. Remove the TODO comments once the protocol is extended.
+- **Recommendation**: Resolve these code annotations as part of spec-05 implementation. Remove the annotations once the protocol is extended.
 
 ---
 

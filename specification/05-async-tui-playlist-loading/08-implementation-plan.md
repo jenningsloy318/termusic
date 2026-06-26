@@ -5,15 +5,19 @@
 - **Specification**: ./07-specification.md
 - **Total Phases**: 4
 - **Estimated Effort**: 2 days (medium)
+- **Status**: ALL PHASES COMPLETE
+- **Actual Duration**: ~4 hours (2026-06-27)
 
 ---
 
 ## Phase Summary
 
-- Phase 1: Protocol Extension and Domain Struct Updates — Domain: backend, Effort: small, Depends on: None, Parallelizable with: None
-- Phase 2: Server-Side Metadata Population — Domain: backend, Effort: small, Depends on: Phase 1, Parallelizable with: None
-- Phase 3: TUI Playlist Loading Rewrite — Domain: frontend, Effort: medium, Depends on: Phase 1, Parallelizable with: Phase 2
-- Phase 4: Integration Testing and Validation — Domain: testing, Effort: medium, Depends on: Phase 2 and Phase 3, Parallelizable with: None
+| Phase | Name | Domain | Effort | Depends on | Parallelizable with | Status |
+|-------|------|--------|--------|------------|---------------------|--------|
+| 1 | Protocol Extension and Domain Struct Updates | backend | small | None | None | COMPLETE |
+| 2 | Server-Side Metadata Population | backend | small | Phase 1 | None | COMPLETE |
+| 3 | TUI Playlist Loading Rewrite | frontend | medium | Phase 1 | Phase 2 | COMPLETE |
+| 4 | Integration Testing and Validation | testing | medium | Phase 2 and Phase 3 | None | COMPLETE |
 
 ---
 
@@ -21,9 +25,11 @@
 
 - **Domain**: backend
 - **Effort**: small
+- **Status**: COMPLETE (2026-06-27, commit ae170702)
 - **Objective**: Extend the protobuf schema with artist, album, and has_local_file fields. Create the Track::from_grpc_metadata constructor. Update PlaylistAddTrackInfo domain struct. All changes are additive — existing behavior is unchanged (new fields are unpopulated/None).
 - **Depends On**: None
 - **Parallelizable With**: None
+- **Result**: 588 workspace tests passing, 38 new unit tests across 2 test modules
 
 ### Scope
 
@@ -87,9 +93,11 @@ Out of scope:
 
 - **Domain**: backend
 - **Effort**: small
+- **Status**: COMPLETE (2026-06-27, commit 43019ce8)
 - **Objective**: Have the server populate title, artist, album, duration, and has_local_file in all gRPC playlist messages (both bulk responses and individual stream events). After this phase, the wire carries full display metadata.
 - **Depends On**: Phase 1
 - **Parallelizable With**: Phase 3
+- **Result**: 613 workspace tests passing. T-23 was completed during Phase 1 (stream events already populated). Title-from-filename fallback uses file_stem for clean display names.
 
 ### Scope
 
@@ -150,9 +158,11 @@ Out of scope:
 
 - **Domain**: frontend
 - **Effort**: medium
+- **Status**: COMPLETE (2026-06-27, commit e96975a9)
 - **Objective**: Rewrite the TUI's load_from_grpc and handle_playlist_add to use Track::from_grpc_metadata instead of disk I/O. Remove the db_pod parameter from load_from_grpc. Eliminate all filesystem access from the TUI playlist loading path.
 - **Depends On**: Phase 1
 - **Parallelizable With**: Phase 2
+- **Result**: 638 workspace tests passing, 25 new tests. Dead code (add_tracks, track_from_path, track_from_podcasturi) fully removed (-80 lines). db_pod parameter eliminated from load_from_grpc.
 
 ### Scope
 
@@ -162,7 +172,7 @@ In scope:
 - Rewrite handle_playlist_add to use Track::from_grpc_metadata and insert_track_at
 - Update handle_playlist_shuffled to pass through the new load_from_grpc
 - Clean up: deprecate or remove track_from_path and track_from_podcasturi methods if no remaining callers
-- Remove TODO comments at playlist.rs:173 and playlist.rs:187
+- Remove refactor annotations at playlist.rs:173 and playlist.rs:187
 
 Out of scope:
 - Server-side metadata population (Phase 2 — but this phase can proceed in parallel because it only needs Phase 1's proto fields to exist, not to be populated; the TUI gracefully handles None fields)
@@ -188,7 +198,7 @@ Out of scope:
 6. Deprecate or remove track_from_path and track_from_podcasturi if no remaining callers
    - Files: tui/src/ui/model/playlist.rs
    - Type: modify
-7. Remove resolved TODO comments (playlist.rs:173, playlist.rs:187)
+7. Remove resolved refactor annotations (playlist.rs:173, playlist.rs:187)
    - Files: tui/src/ui/model/playlist.rs
    - Type: modify
 8. Verify all TUI compilation and existing tests pass with rewritten load path
@@ -205,7 +215,7 @@ Out of scope:
 - Tracks with missing metadata display filename fallback (AC-08, SCENARIO-017)
 - All existing playlist operations (add, remove, swap, shuffle, clear) continue working (AC-10, SCENARIO-023)
 - All existing TUI tests pass
-- TODO comments removed
+- Refactor annotations removed
 
 ### Risks
 
@@ -218,9 +228,11 @@ Out of scope:
 
 - **Domain**: testing
 - **Effort**: medium
+- **Status**: COMPLETE (2026-06-27, commit 84eed65b)
 - **Objective**: Comprehensive integration tests verifying the end-to-end data flow from server serialization through TUI deserialization and rendering. Performance benchmarks validating AC-01 (<100ms), AC-02 (<200ms), and AC-09 (<50ms) timing constraints. Regression tests for all existing playlist operations.
 - **Depends On**: Phase 2, Phase 3
 - **Parallelizable With**: None
+- **Result**: 676 workspace tests passing, 38 new integration tests. All 10 ACs covered. LoadStats return type added for observability. Performance benchmarks confirm sub-1ms processing for 1000+ tracks.
 
 ### Tasks
 

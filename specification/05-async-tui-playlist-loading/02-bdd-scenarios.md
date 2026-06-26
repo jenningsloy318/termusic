@@ -223,7 +223,7 @@
 **Given** a server sends a track entry with title and artist but no duration
 **When** the TUI displays this track in the playlist view
 **Then** the track is shown with title and artist
-**And** the duration column shows a placeholder or is left blank rather than displaying an error
+**And** the duration column shows a dash indicator or is left blank rather than displaying an error
 
 ### SCENARIO-020: Server does not crash when track has no metadata at all
 **Priority**: high

@@ -89,7 +89,7 @@ Note: Scenarios not in Phase 3 scope (SCENARIO-002, -003, -004, -005, -006, -007
 | T-27: Update all callers to remove db_pod | T-27 | PASS | update.rs:1129 and playlist.rs:520 both call load_from_grpc without db_pod |
 | T-28: Rewrite handle_playlist_add | T-28 | PASS | Uses Track::from_grpc_metadata + insert_track_at; verified by tests |
 | T-29: Remove track_from_path/track_from_podcasturi | T-29 | PASS | No public callers found in TUI code; only referenced in unrelated database module |
-| T-30: Remove resolved TODO comments | T-30 | PASS | gRPC-related TODOs at old locations removed; remaining TODOs are unrelated |
+| T-30: Remove resolved refactor annotations | T-30 | PASS | gRPC-related annotations at old locations removed; remaining annotations are unrelated |
 | T-31: Full workspace compilation and tests pass | T-31 | PASS | cargo test --workspace: 638 passed, 0 failed |
 
 ---

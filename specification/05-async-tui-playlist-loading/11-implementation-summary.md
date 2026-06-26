@@ -1,5 +1,20 @@
 # Implementation Summary: Async TUI Playlist Loading
 
+- **name**: async-tui-playlist-loading-implementation
+- **description**: Complete implementation summary for the Async TUI Playlist Loading feature (spec-05). Eliminated all TUI-side disk I/O during playlist loading by extending the gRPC protocol with display metadata and rewriting load_from_grpc to use a pure in-memory Track constructor.
+- **type**: implementation-summary
+- **feature**: 05-async-tui-playlist-loading
+- **status**: complete
+- **date**: 2026-06-27
+- **phases**: 4 (all complete)
+- **tasks**: 35/35 complete
+- **tests-added**: 131
+- **total-tests-passing**: 676
+- **lines-changed**: +4320/-124
+- **files-changed**: 18
+- **code-review**: Approved (0 critical, 0 high, 0 medium, 2 low)
+- **adversarial-review**: PASS (0 critical, 0 high, 0 medium, 4 low)
+
 ---
 
 ## Phase 1 — Protocol Extension and Domain Struct Updates
@@ -316,3 +331,80 @@ Phase 4 delivered a comprehensive integration test suite (38 tests in `async_tui
 ### Next Steps
 
 Phase 4 complete. All 4 tasks (T-32 through T-35) are implemented and verified. The full feature (Async TUI Playlist Loading) is complete across all 4 phases with 35 tasks delivered. No remaining items.
+
+---
+
+## Final Summary
+
+### Feature Outcome
+
+The Async TUI Playlist Loading feature eliminates the multi-second blocking freeze that occurred when the TUI loaded playlist data from the server. Previously, `load_from_grpc` called `Track::read_track_from_path` for every track, performing synchronous disk I/O (lofty metadata parsing) on the main event loop thread. For 200+ tracks this blocked the TUI for 2-5 seconds.
+
+The solution extends the gRPC protocol to transmit full display metadata (title, artist, album, duration, has_local_file) from the server and rewrites the TUI to construct Track objects from protocol data without any filesystem access. Processing time dropped from seconds to sub-millisecond.
+
+### Acceptance Criteria Status
+
+| AC | Description | Status | Verified By |
+|----|-------------|--------|-------------|
+| AC-01 | TUI event loop not blocked >100ms | MET | Performance tests (1000/5000 tracks, sub-1ms actual) |
+| AC-02 | Playlist renders within 200ms of response | MET | Combined load+sync test under 200ms |
+| AC-03 | Server includes sufficient display metadata | MET | Integration tests verify all fields populated |
+| AC-04 | TUI constructs Track without disk I/O | MET | Structural test with non-existent paths proves zero I/O |
+| AC-05 | Shuffle events processed without disk re-reads | MET | Shuffle event tests use from_grpc_metadata |
+| AC-06 | Proto extended with backward wire compatibility | MET | Proto compiles, optional fields 5,6,7 additive |
+| AC-07 | Server populates optional_title (not None) | MET | Server serialization tests verify title population |
+| AC-08 | Graceful fallback for missing metadata | MET | Missing metadata tests, filename-stem fallback |
+| AC-09 | playlist_sync completes within 50ms/1000 tracks | MET | Data access simulation test under 50ms |
+| AC-10 | All existing playlist operations continue working | MET | Regression tests for add/remove/swap/shuffle/clear |
+
+### Code Review Findings (All Low Severity)
+
+1. **F-01** (Low): LoadStats computed but never logged at call sites — observability gap
+2. **F-02** (Low): Stale `#[allow(dead_code)]` annotation on `insert_track_at`
+
+### Adversarial Review Findings (All Low Severity)
+
+1. **S-01** (Low): LoadStats not logged at call sites (same as F-01)
+2. **S-02** (Low): Stale dead_code annotation (same as F-02)
+3. **A-01** (Low): has_local_file serialization asymmetry between bulk and stream paths
+4. **M-01** (Low): LoadStats struct adds infrastructure without current production consumers
+
+### Files Changed (Production Code)
+
+| File | Change Type | Lines |
+|------|-------------|-------|
+| `lib/proto/player.proto` | modified | +5/-0 |
+| `lib/src/lib.rs` | modified | +3/-0 |
+| `lib/src/player.rs` | modified | +13/-0 |
+| `lib/src/track.rs` | modified | +52/-0 |
+| `playback/src/playlist.rs` | modified | +49/-4 |
+| `tui/src/ui/model/mod.rs` | modified | +75/-27 |
+| `tui/src/ui/model/playlist.rs` | modified | +12/-80 |
+| `tui/src/ui/model/update.rs` | modified | +1/-4 |
+| `tui/src/ui/components/playlist.rs` | modified | +23/-14 |
+| `tui/src/ui/server_req_actor.rs` | modified | +3/-1 |
+| `tui/src/ui/tui_cmd.rs` | modified | +1/-1 |
+| `server/src/async_loading_phase3_tests.rs` | modified | +19/-5 |
+| `server/src/server.rs` | modified | +2/-2 |
+
+### Files Changed (Test Code)
+
+| File | Change Type | Lines |
+|------|-------------|-------|
+| `lib/src/async_tui_phase1_tests.rs` | created | +617/-0 |
+| `tui/src/ui/model/async_tui_phase1_playlist_tests.rs` | created | +191/-0 |
+| `playback/tests/phase2_server_metadata_population_tests.rs` | created | +854/-0 |
+| `tui/src/ui/model/async_tui_phase3_tests.rs` | created | +896/-0 |
+| `tui/src/ui/model/async_tui_loading_tests.rs` | created | +1537/-0 |
+
+### Changelog
+
+```
+feat(protocol-extension-and-domain-struct-updates): Phase 1 — extended gRPC PlaylistAddTrack with artist, album, has_local_file fields; created Track::from_grpc_metadata constructor; added TUIPlaylist::insert_track_at; 38 new tests (ae170702)
+
+feat(server-side-metadata-population): Phase 2 — populated as_grpc_playlist_tracks with full display metadata; title-from-filename fallback using file_stem; all 613 tests pass (43019ce8)
+
+feat(tui-playlist-loading-rewrite): Phase 3 — rewrote load_from_grpc to eliminate all filesystem I/O; removed db_pod parameter; removed dead code (add_tracks, track_from_path, track_from_podcasturi); 25 new tests (e96975a9)
+
+feat(integration-testing-and-validation): Phase 4 — 38 integration tests covering all 10 ACs and 20+ BDD scenarios; added LoadStats return type for observability; performance benchmarks confirm sub-1ms processing; all 676 tests pass (84eed65b)
+```

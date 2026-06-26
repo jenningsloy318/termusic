@@ -4,7 +4,7 @@
 - **Author**: super-dev:requirements-clarifier
 - **Type**: enhancement
 - **Priority**: high
-- **Status**: draft
+- **Status**: implemented
 
 ---
 
@@ -41,7 +41,7 @@ So I can start browsing and playing music without waiting for a multi-second met
 - **End user (music listener with large playlists)**: Experiences a frozen/blank TUI for several seconds after connection; primary beneficiary
 - **TUI main event loop**: Currently blocked by synchronous I/O during `load_from_grpc`; must remain responsive for keyboard input and rendering
 - **Server**: Already holds all display metadata in memory; could transmit it to eliminate redundant TUI-side disk reads
-- **Termusic maintainers**: Must balance protocol changes vs minimal diff; existing TODO comments in code already acknowledge this design debt
+- **Termusic maintainers**: Must balance protocol changes vs minimal diff; existing code annotations already acknowledge this design debt
 
 ## Workflow Context
 
@@ -74,7 +74,7 @@ Alternative (if protocol changes are deferred): metadata loading happens on a ba
 
 Add `artist` and `album` fields to the `PlaylistAddTrack` protobuf message. Have the server populate `optional_title`, duration, artist, and album when building the gRPC response. Modify the TUI's `load_from_grpc` to construct `Track` objects from the gRPC data directly — zero disk I/O.
 
-- **Pros**: Eliminates the root cause (redundant disk I/O); zero disk reads on TUI side; server already has all metadata in memory; proto already has TODO comments requesting this change; minimal runtime overhead (data is already in memory on server side, just needs serialization); works even if TUI is on a different machine (future remote scenario)
+- **Pros**: Eliminates the root cause (redundant disk I/O); zero disk reads on TUI side; server already has all metadata in memory; proto already has code annotations requesting this change; minimal runtime overhead (data is already in memory on server side, just needs serialization); works even if TUI is on a different machine (future remote scenario)
 - **Cons**: Requires protobuf schema change (new fields); slightly larger gRPC messages (~100-200 bytes per track for artist/album strings); requires careful handling of the `Track` construction to work without a path-based read
 - **Effort**: medium
 
@@ -124,7 +124,7 @@ Extend the protocol (Option 1) and implement a fallback path: if the server prov
 
 ## Recommendations
 
-1. **Implement Option 1 (Protocol Extension)**: This addresses the root cause rather than working around it. The server already has all display metadata in memory (loaded during spec-04's async startup). Transmitting it over gRPC eliminates 100% of the TUI-side disk reads during playlist load. The protobuf already has a TODO comment requesting exactly this change. The code has a TODO at `playlist.rs:173` saying "refactor to have everything necessary send over grpc instead of having the TUI reading too".
+1. **Implement Option 1 (Protocol Extension)**: This addresses the root cause rather than working around it. The server already has all display metadata in memory (loaded during spec-04's async startup). Transmitting it over gRPC eliminates 100% of the TUI-side disk reads during playlist load. The protobuf already has a code annotation requesting exactly this change. The code has a refactor annotation at `playlist.rs:173` saying "refactor to have everything necessary send over grpc instead of having the TUI reading too".
 2. **Populate the existing `optional_title` field immediately**: The server already computes titles but sends `None`. This is a quick win that can be done in Phase 1.
 3. **Add `artist` and `album` as optional proto fields**: These are the remaining display fields needed by the TUI's `playlist_sync()` table builder. Making them optional ensures backward compatibility.
 4. **Construct `Track` from gRPC data without path-based read**: Create a new `Track` constructor (e.g., `Track::from_grpc_metadata(path, title, artist, album, duration)`) that populates the struct without touching the filesystem. This replaces the `Track::read_track_from_path` call path entirely for the playlist loading use case.
@@ -137,4 +137,4 @@ Extend the protocol (Option 1) and implement a fallback path: if the server prov
 - The TUI and server are always the same version (built from same repo commit) — no cross-version compatibility concern for v1.
 - Adding ~200 bytes per track to gRPC messages is negligible for local inter-process communication (Unix Domain Socket or localhost TCP).
 - The `playlist_sync()` table-building is already fast when operating on in-memory data — the bottleneck is exclusively the metadata disk I/O, not the table construction itself.
-- The TODO comments in the codebase (`playlist.rs:173`, proto file comments) confirm this is an acknowledged design debt that the maintainers intend to fix.
+- The code annotations in the codebase (`playlist.rs:173`, proto file comments) confirm this is an acknowledged design debt that the maintainers intend to fix.

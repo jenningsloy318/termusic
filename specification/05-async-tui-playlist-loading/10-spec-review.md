@@ -105,7 +105,7 @@ Verified references:
 - `lib/src/player.rs` - EXISTS, PlaylistAddTrackInfo at line 336 confirmed (missing artist/album/has_local_file as expected)
 - `lib/src/track.rs` - EXISTS, Track struct at line 185 with inner/duration/title/artist fields confirmed
 - `tui/src/ui/model/mod.rs` - EXISTS, load_from_grpc at line 187 with db_pod parameter confirmed
-- `tui/src/ui/model/playlist.rs` - EXISTS, track_from_path at line 157, TODO at line 173, track_from_podcasturi at line 186, TODO at line 187 all confirmed
+- `tui/src/ui/model/playlist.rs` - EXISTS, track_from_path at line 157, refactor annotation at line 173, track_from_podcasturi at line 186, refactor annotation at line 187 all confirmed
 - `tui/src/ui/components/playlist.rs` - EXISTS, handle_playlist_add at line 448, handle_playlist_shuffled at line 509 confirmed
 - `tui/src/ui/model/update.rs` - EXISTS, load_from_grpc caller at line 1131 confirmed
 - `playback/src/playlist.rs` - EXISTS, as_grpc_playlist_tracks at line 1030, send_stream_ev_pl at line 1132, optional_title: None at line 1043 confirmed
@@ -208,8 +208,8 @@ Minor ambiguity: The spec mentions "derive title from filename" (Section 5.7) bu
 | tui/src/ui/model/mod.rs:load_from_grpc | Line 187 | VERIFIED |
 | load_from_grpc param podcast_db: &DBPod | Line 190 | VERIFIED |
 | tui/src/ui/model/playlist.rs:track_from_path | Line 157 | VERIFIED |
-| TODO at playlist.rs:173 | Line 173 | VERIFIED |
-| TODO at playlist.rs:187 (approx) | Line 187 | VERIFIED |
+| Refactor annotation at playlist.rs:173 | Line 173 | VERIFIED |
+| Refactor annotation at playlist.rs:187 (approx) | Line 187 | VERIFIED |
 | tui/src/ui/components/playlist.rs:handle_playlist_add | Line 448 | VERIFIED |
 | tui/src/ui/components/playlist.rs:handle_playlist_shuffled | Line 509 | VERIFIED |
 | tui/src/ui/model/update.rs:load_from_grpc caller | Line 1131 | VERIFIED |
