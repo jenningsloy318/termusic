@@ -35,9 +35,9 @@ mod async_loading_phase1_tests;
 #[cfg(test)]
 mod async_loading_phase2_tests;
 #[cfg(test)]
-mod async_loading_phase3_tests;
-#[cfg(test)]
 mod async_loading_phase34_tests;
+#[cfg(test)]
+mod async_loading_phase3_tests;
 #[cfg(test)]
 mod async_loading_phase4_tests;
 mod cli;

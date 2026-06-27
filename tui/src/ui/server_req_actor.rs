@@ -110,7 +110,9 @@ impl ServerRequestActor {
                 self.client_handle.podcast_refresh_feeds().await?;
             }
             TuiCmd::PodcastDownloadEpisodes(request) => {
-                self.client_handle.podcast_download_episodes(request).await?;
+                self.client_handle
+                    .podcast_download_episodes(request)
+                    .await?;
             }
             TuiCmd::PodcastAddFeed(url) => {
                 self.client_handle.podcast_add_feed(url).await?;

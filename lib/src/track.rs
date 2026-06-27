@@ -197,6 +197,58 @@ impl PartialEq for Track {
 }
 
 impl Track {
+    /// Construct a Track from gRPC-provided metadata without any disk I/O.
+    ///
+    /// This is the primary constructor for TUI-side Track creation when
+    /// receiving playlist data from the server. The server has already
+    /// parsed all metadata from disk; this constructor assembles the
+    /// domain object from pre-parsed fields.
+    ///
+    /// # Arguments
+    /// * `source` - The track identifier (Path, Url, or `PodcastUrl` variant)
+    /// * `title` - Display title (falls back to filename derivation if None)
+    /// * `artist` - Display artist (None if unavailable)
+    /// * `album` - Display album (None if unavailable)
+    /// * `duration` - Track duration (None if unavailable)
+    /// * `has_local_file` - Whether a podcast episode has a local download
+    #[must_use]
+    pub fn from_grpc_metadata(
+        source: PlaylistTrackSource,
+        title: Option<String>,
+        artist: Option<String>,
+        album: Option<String>,
+        duration: Option<Duration>,
+        has_local_file: bool,
+    ) -> Self {
+        let inner = match source {
+            PlaylistTrackSource::Path(path) => MediaTypes::Track(TrackData {
+                path: PathBuf::from(path),
+                album,
+                file_type: None,
+            }),
+            PlaylistTrackSource::Url(url) => MediaTypes::Radio(RadioTrackData::new(url)),
+            PlaylistTrackSource::PodcastUrl(url) => {
+                let localfile = if has_local_file {
+                    Some(PathBuf::new()) // sentinel: exists but path not transmitted
+                } else {
+                    None
+                };
+                MediaTypes::Podcast(PodcastTrackData {
+                    url,
+                    localfile,
+                    image_url: None,
+                })
+            }
+        };
+
+        Self {
+            inner,
+            duration,
+            title,
+            artist,
+        }
+    }
+
     /// Create a new Track instance from a Podcast Episode from the database
     #[must_use]
     pub fn from_podcast_episode(ep: &Episode) -> Self {

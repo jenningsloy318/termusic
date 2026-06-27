@@ -244,6 +244,11 @@ message PlaylistAddTrack {
 
   // The Id of the track that was added
   TrackId id = 4;
+
+  // Display metadata fields for zero-I/O TUI rendering
+  optional string artist = 5;
+  optional string album = 6;
+  optional bool has_local_file = 7;
 }
 
 // A Track got removed from the playlist.

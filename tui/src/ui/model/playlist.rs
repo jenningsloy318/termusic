@@ -1,11 +1,10 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use pathdiff::diff_paths;
 use termusiclib::player::PlaylistRemoveTrackInfo;
-use termusiclib::player::playlist_helpers::{PlaylistAddTrack, PlaylistTrackSource};
-use termusiclib::podcast::db::Database as DBPod;
+use termusiclib::player::playlist_helpers::PlaylistTrackSource;
 use termusiclib::track::MediaTypes;
 use termusiclib::utils::get_parent_folder;
 use termusiclib::{config::v2::server::LoopMode, track::Track};
@@ -20,6 +19,17 @@ pub struct TUIPlaylist {
 }
 
 impl TUIPlaylist {
+    /// Insert a pre-constructed Track at a specific index without disk I/O.
+    /// If the index >= len, the track is appended at the end.
+    #[allow(dead_code)] // Used in Phase 3 (TUI playlist loading rewrite)
+    pub fn insert_track_at(&mut self, index: usize, track: Track) {
+        if index >= self.tracks.len() {
+            self.tracks.push(track);
+        } else {
+            self.tracks.insert(index, track);
+        }
+    }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.tracks.is_empty()
@@ -113,82 +123,6 @@ impl TUIPlaylist {
         Self::check_same_source(&items.trackid, track_at_idx.inner(), at_index)?;
 
         self.remove_simple(at_index)
-    }
-
-    /// Add Paths / Urls from the music service
-    ///
-    /// # Errors
-    ///
-    /// - When invalid inputs are given (non-existing path, etc)
-    pub fn add_tracks(&mut self, tracks: PlaylistAddTrack, db_pod: &DBPod) -> Result<()> {
-        self.tracks.reserve(tracks.tracks.len());
-        let at_index = usize::try_from(tracks.at_index).unwrap();
-        if at_index >= self.len() {
-            // insert tracks at the end
-            for track_location in tracks.tracks {
-                let track = match &track_location {
-                    PlaylistTrackSource::Path(path) => Self::track_from_path(path)?,
-                    PlaylistTrackSource::Url(uri) => Self::track_from_uri(uri),
-                    PlaylistTrackSource::PodcastUrl(uri) => {
-                        Self::track_from_podcasturi(uri, db_pod)?
-                    }
-                };
-
-                self.tracks.push(track);
-            }
-
-            return Ok(());
-        }
-        // insert tracks at position
-        for (at_index, track_location) in (at_index..).zip(tracks.tracks) {
-            let track = match &track_location {
-                PlaylistTrackSource::Path(path) => Self::track_from_path(path)?,
-                PlaylistTrackSource::Url(uri) => Self::track_from_uri(uri),
-                PlaylistTrackSource::PodcastUrl(uri) => Self::track_from_podcasturi(uri, db_pod)?,
-            };
-
-            self.tracks.insert(at_index, track);
-        }
-
-        Ok(())
-    }
-
-    /// Create a Track from a given Path
-    fn track_from_path(path_str: &str) -> Result<Track> {
-        let path = Path::new(path_str);
-
-        // Not checking that it is a supported file, as the server checks that.
-
-        // if !filetype_supported(path_str) {
-        //     error!("unsupported filetype: {path:#?}");
-        //     let p = path.to_path_buf();
-        //     let ext = path.extension().map(|v| v.to_string_lossy().to_string());
-        //     return Err(PlaylistAddError::UnsupportedFileType(ext, p));
-        // }
-
-        // if !path.exists() {
-        //     return Err(PlaylistAddError::PathDoesNotExist(path.to_path_buf()));
-        // }
-
-        // TODO: refactor to have everything necessary send over grpc instead of having the TUI reading too
-        let track =
-            Track::read_track_from_path(path).with_context(|| path.display().to_string())?;
-
-        Ok(track)
-    }
-
-    /// Create a Track from a given uri (radio only)
-    fn track_from_uri(uri: &str) -> Track {
-        Track::new_radio(uri)
-    }
-
-    /// Create a Track from a given podcast uri
-    fn track_from_podcasturi(uri: &str, db_pod: &DBPod) -> Result<Track> {
-        // TODO: refactor to have everything necessary send over grpc instead of having the TUI access to the database
-        let ep = db_pod.get_episode_by_url(uri)?;
-        let track = Track::from_podcast_episode(&ep);
-
-        Ok(track)
     }
 
     #[must_use]

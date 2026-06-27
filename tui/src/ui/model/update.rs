@@ -1126,10 +1126,7 @@ impl Model {
             ServerReqResponse::FullPlaylist(playlist_tracks) => {
                 info!("Processing Playlist from server");
                 let current_track_index = playlist_tracks.current_track_index;
-                if let Err(err) = self
-                    .playback
-                    .load_from_grpc(playlist_tracks, &self.podcast.db_podcast)
-                {
+                if let Err(err) = self.playback.load_from_grpc(playlist_tracks) {
                     self.mount_error_popup(err);
                 }
 
