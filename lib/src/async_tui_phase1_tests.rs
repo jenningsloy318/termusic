@@ -25,7 +25,7 @@ mod tests {
 
     use crate::player::playlist_helpers::PlaylistTrackSource;
     use crate::player::{PlaylistAddTrackInfo, UpdatePlaylistEvents};
-    use crate::track::{MediaTypes, Track};
+    use crate::track::Track;
 
     // =========================================================================
     // T-09: Track::from_grpc_metadata — Path source variant

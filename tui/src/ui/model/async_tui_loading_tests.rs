@@ -27,13 +27,12 @@ mod tests {
 
     use termusiclib::player::playlist_helpers::PlaylistTrackSource;
     use termusiclib::player::{
-        PlaylistAddTrackInfo, PlaylistShuffledInfo, PlaylistSwapInfo, PlaylistTracks,
-        UpdatePlaylistEvents,
+        PlaylistAddTrackInfo, PlaylistShuffledInfo, PlaylistTracks, UpdatePlaylistEvents,
     };
     use termusiclib::track::Track;
 
-    use crate::ui::model::Playback;
     use crate::ui::model::playlist::TUIPlaylist;
+    use crate::ui::model::Playback;
 
     // =========================================================================
     // Helpers

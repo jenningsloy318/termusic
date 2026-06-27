@@ -50,7 +50,7 @@ mod async_loading_phase34_tests {
 
     // Import the functions that will be created in Phase 2/3.
     // This use statement will cause a compilation failure until the functions are implemented.
-    use crate::{complete_background_load, start_background_playlist_load};
+    use crate::complete_background_load;
 
     // =========================================================================
     // Helper: Create a test SharedPlaylist using the Playlist::new constructor
