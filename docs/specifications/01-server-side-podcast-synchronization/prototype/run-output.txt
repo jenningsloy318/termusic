@@ -1,0 +1,100 @@
+warning: variable `completed` is assigned to, but never used
+   --> main.rs:348:9
+    |
+348 |     let mut completed = 0;
+    |         ^^^^^^^^^^^^^
+    |
+    = note: consider using `_completed` instead
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable `failed` is assigned to, but never used
+   --> main.rs:349:9
+    |
+349 |     let mut failed = 0;
+    |         ^^^^^^^^^^
+    |
+    = note: consider using `_failed` instead
+
+warning: value assigned to `completed` is never read
+   --> main.rs:357:22
+    |
+357 |             Ok(_) => completed += 1,
+    |                      ^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `failed` is never read
+   --> main.rs:358:23
+    |
+358 |             Err(_) => failed += 1,
+    |                       ^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: `podcast-sync-prototype` (bin "prototype") generated 4 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+     Running `target/debug/prototype`
+=== Podcast Sync Prototype: Design Constant Validation ===
+
+## Test 1: Feed Response Times (connect_timeout = 10s spec)
+-----------------------------------------------------------
+  [OK] https://feeds.simplecast.com/54nAGcIl - 4.77s, 2896 episodes
+  [OK] https://changelog.com/podcast/feed - 9.34s, 1011 episodes
+  [OK] https://feeds.fireside.fm/selfhosted/rss - 2.49s, 151 episodes
+  [OK] https://rustacean-station.org/podcast.rss - 3.04s, 183 episodes
+  [ERR] https://feeds.transistor.fm/signals-and-threads - 1.01s - RSS parse failed: reached end of input without finding a complete channel
+
+## Test 2: Episode Freshness (sync_interval = 3600s spec)
+-----------------------------------------------------------
+  https://feeds.simplecast.com/54nAGcIl - latest episode: 23.6 hours (1.0 days) old
+  https://changelog.com/podcast/feed - latest episode: 422.4 hours (17.6 days) old
+  https://feeds.fireside.fm/selfhosted/rss - latest episode: 9335.4 hours (389.0 days) old
+  https://rustacean-station.org/podcast.rss - latest episode: 2781.9 hours (115.9 days) old
+
+## Test 3: Dedup Field Availability (2/3 matching threshold)
+--------------------------------------------------------------
+  https://feeds.simplecast.com/54nAGcIl (2896 eps): guid=100%, url=100%, pubdate=100% => 3/3 fields >90%
+  https://changelog.com/podcast/feed (1011 eps): guid=100%, url=100%, pubdate=100% => 3/3 fields >90%
+  https://feeds.fireside.fm/selfhosted/rss (151 eps): guid=100%, url=100%, pubdate=100% => 3/3 fields >90%
+  https://rustacean-station.org/podcast.rss (183 eps): guid=100%, url=100%, pubdate=100% => 3/3 fields >90%
+
+## Test 4: Concurrent Fetch (concurrent_downloads_max = 3 spec)
+-----------------------------------------------------------------
+  Sequential total: 1.46s
+  Concurrent (max 3): 3.51s
+  Speedup factor: 0.42x
+  Feeds OK: 5, Failed: 0
+
+## Test 5: GUID Uniqueness Check (dedup correctness)
+-----------------------------------------------------
+  https://feeds.simplecast.com/54nAGcIl - 2896/2896 episodes have GUIDs (100.0% coverage)
+  https://changelog.com/podcast/feed - 1011/1011 episodes have GUIDs (100.0% coverage)
+  https://feeds.fireside.fm/selfhosted/rss - 151/151 episodes have GUIDs (100.0% coverage)
+  https://rustacean-station.org/podcast.rss - 183/183 episodes have GUIDs (100.0% coverage)
+
+## RESULTS SUMMARY (JSON)
+=========================
+{
+  "connect_timeout_spec_secs": 10,
+  "connect_timeout_measured_max_secs": 9.341,
+  "connect_timeout_measured_median_secs": 4.773,
+  "connect_timeout_within_tolerance": true,
+  "sync_interval_spec_secs": 3600,
+  "sync_interval_min_episode_age_hours": 23.6,
+  "sync_interval_adequate": true,
+  "concurrent_max_spec": 3,
+  "concurrent_speedup_factor": 0.42,
+  "concurrent_adequate": false,
+  "dedup_threshold_spec": 2,
+  "dedup_fields_adequate": true,
+  "max_retries_spec": 3,
+  "initial_success_rate": 0.80,
+  "retries_adequate": true,
+  "feeds_tested": 5,
+  "feeds_succeeded": 4,
+  "feeds_failed": 1
+}
+
+## VERDICT: FAIL
+  FAIL: concurrent_downloads_max - no speedup observed with 3 concurrent
